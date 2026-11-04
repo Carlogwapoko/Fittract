@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// Fittract user data lives in a single document per user: users/{uid}.
+//
+// Access rules:
+//   - Only the authenticated owner may read or write their document.
+//   - Deletes are denied: data removal goes through a sanitized empty
+//     snapshot, so nothing is silently destroyed from a client.
+//   - Writes must keep the {data, updatedAt} shape and must never contain
+//     password material or other denylisted keys inside data.
+//
+// Deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['data', 'updatedAt'])
+        && request.resource.data.data is map
+        && request.resource.data.updatedAt is int
+        && request.resource.data.updatedAt > 0
+        // Never accept credential material or secrets from a client.
+        && !request.resource.data.data.keys().hasAny([
+             'cred', 'pw', 'password', 'hash', 'salt'
+           ])
+        // Loose size bound: keeps documents well under Firestore's 1 MiB
+        // limit so a runaway list cannot brick the account.
+        && request.resource.data.data.size() < 200;
+
+      allow delete: if false;
+    }
+
+    // Any other path is denied by default (no matching rule).
+  }
+}

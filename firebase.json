@@ -1,0 +1,94 @@
+{
+    "functions":  {
+                      "source":  "functions",
+                      "codebase":  "default",
+                      "ignore":  [
+                                     "node_modules",
+                                     ".git",
+                                     "firebase-debug.log",
+                                     "firebase-debug.*.log"
+                                 ]
+                  },
+    "flutter":  {
+                    "platforms":  {
+                                      "android":  {
+                                                      "default":  {
+                                                                      "projectId":  "fittrack-mydatabase",
+                                                                      "appId":  "1:223638020988:android:b786774d621bb3caf2baf9",
+                                                                      "fileOutput":  "android/app/google-services.json"
+                                                                  }
+                                                  },
+                                      "dart":  {
+                                                   "lib/firebase_options.dart":  {
+                                                                                     "projectId":  "fittrack-mydatabase",
+                                                                                     "configurations":  {
+                                                                                                            "android":  "1:223638020988:android:b786774d621bb3caf2baf9",
+                                                                                                            "ios":  "1:223638020988:ios:0f2f33760c041a9cf2baf9",
+                                                                                                            "macos":  "1:223638020988:ios:0f2f33760c041a9cf2baf9",
+                                                                                                            "web":  "1:223638020988:web:6d3e6087204fa735f2baf9",
+                                                                                                            "windows":  "1:223638020988:web:da26c70138a469a4f2baf9"
+                                                                                                        }
+                                                                                 }
+                                               }
+                                  }
+                },
+    "firestore":  {
+                      "rules":  "firestore.rules"
+                  },
+    "storage":  {
+                    "rules":  "storage.rules"
+                },
+    "hosting":  {
+                    "public":  "public",
+                    "cleanUrls":  true,
+                    "ignore":  [
+                                   "firebase.json",
+                                   "**/.*",
+                                   "**/node_modules/**"
+                               ],
+                    "headers":  [
+                                    {
+                                        "source":  "**",
+                                        "headers":  [
+                                                        {
+                                                            "key":  "X-Content-Type-Options",
+                                                            "value":  "nosniff"
+                                                        },
+                                                        {
+                                                            "key":  "Referrer-Policy",
+                                                            "value":  "strict-origin-when-cross-origin"
+                                                        },
+                                                        {
+                                                            "key":  "X-Frame-Options",
+                                                            "value":  "DENY"
+                                                        },
+                                                        {
+                                                            "key":  "Strict-Transport-Security",
+                                                            "value":  "max-age=31536000; includeSubDomains"
+                                                        },
+                                                        {
+                                                            "key":  "Permissions-Policy",
+                                                            "value":  "camera=(self), microphone=(), geolocation=()"
+                                                        },
+                                                        {
+                                                            "key":  "Cache-Control",
+                                                            "value":  "public, max-age=300"
+                                                        }
+                                                    ]
+                                    },
+                                    {
+                                        "source":  "**/*.css",
+                                        "headers":  [
+                                                        {
+                                                            "key":  "X-Content-Type-Options",
+                                                            "value":  "nosniff"
+                                                        },
+                                                        {
+                                                            "key":  "Cache-Control",
+                                                            "value":  "public, max-age=3600"
+                                                        }
+                                                    ]
+                                    }
+                                ]
+                }
+}

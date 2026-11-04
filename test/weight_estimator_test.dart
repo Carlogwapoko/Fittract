@@ -1,0 +1,76 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:fittract/services/weight_estimator.dart';
+
+String dayKey(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-'
+    '${date.month.toString().padLeft(2, '0')}-'
+    '${date.day.toString().padLeft(2, '0')}';
+
+Map<String, dynamic> accountData({
+  required String anchorDate,
+  List<dynamic> meals = const [],
+}) => {
+  'weights': [
+    [anchorDate, 72.0],
+  ],
+  'goal': {'sw': 72.0},
+  'weightAnchorDate': anchorDate,
+  'meals': meals,
+  'act': <dynamic>[],
+  'steps': 0,
+  'log': <dynamic>[],
+  'hist': <dynamic>[],
+  'age': 30,
+  'h': 170,
+  'sex': 'other',
+  'activityLevel': 'sedentary',
+};
+
+void main() {
+  test('days without meals stay incomplete and do not change weight', () {
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final data = accountData(anchorDate: dayKey(yesterday));
+
+    final series = WeightEstimator.calculate(data);
+
+    expect(series.hasAnchor, isTrue);
+    expect(series.days.last.complete, isFalse);
+    expect(series.days.last.kg, 72);
+  });
+
+  test('logged meal calories move weight using the Mifflin estimate', () {
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final data = accountData(
+      anchorDate: dayKey(yesterday),
+      meals: [
+        {'k': 2000},
+      ],
+    );
+
+    final series = WeightEstimator.calculate(data);
+    final restingCalories = 10 * 72 + 6.25 * 170 - 5 * 30 - 78;
+    final expected = 72 + (2000 - restingCalories * 1.2) / 7700;
+
+    expect(series.days.last.complete, isTrue);
+    expect(series.currentWeightKg, closeTo(expected, .0001));
+  });
+
+  test('cached estimates are recomputed when meal data changes', () {
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final data = accountData(
+      anchorDate: dayKey(yesterday),
+      meals: [
+        {'k': 2000},
+      ],
+    );
+
+    final first = WeightEstimator.calculate(data).currentWeightKg;
+    data['meals'] = [
+      {'k': 3000},
+    ];
+    final updated = WeightEstimator.calculate(data).currentWeightKg;
+
+    expect(updated, greaterThan(first));
+  });
+}

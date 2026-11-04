@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#075c52">
+    <meta name="description" content="FitTrack Privacy Policy.">
+    <title>Privacy Policy | FitTrack</title>
+    <link rel="stylesheet" href="/policies.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero hero-compact">
+        <a class="brand" href="/">FITTRACK</a>
+        <p class="eyebrow">YOUR INFORMATION, EXPLAINED</p>
+        <h1>Privacy Policy</h1>
+        <p class="lead">Last updated: November 3, 2026</p>
+      </header>
+      <article class="document">
+        <p class="notice"><strong>Before publication:</strong> Replace the bracketed operator and contact details with FitTrack's actual information.</p>
+
+        <h2>1. Who is responsible</h2>
+        <p><strong>[FitTrack operator legal name]</strong> (“FitTrack,” “we,” “us,” or “our”) is responsible for information handled through the FitTrack application and these policy pages. For privacy questions or requests, contact <strong>[privacy contact email]</strong>.</p>
+
+        <h2>2. Information you provide or create</h2>
+        <p>Depending on how you use FitTrack, information can include:</p>
+        <ul>
+          <li>Account details such as your name and email address, and sign-in provider information.</li>
+          <li>Fitness and wellness records you enter, including routines, workout history, activity, steps, body measurements, nutrition and food logs, water intake, goals, and schedules.</li>
+          <li>Meal photos you choose from your gallery or take with your camera to scan food and estimate ingredients and nutrition.</li>
+          <li>App preferences, such as units, theme, and reminder settings.</li>
+        </ul>
+        <p>Weight and calorie records are account data and stay on your account. They are saved locally on your device and synchronized to Firebase only for accounts linked to cloud services; they are not shared with other users.</p>
+        <p>FitTrack does not need access to your entire photo library: you choose an individual image using the device’s gallery picker. Camera access is used only when you choose the camera option.</p>
+
+        <h2>3. Local storage and cloud synchronization</h2>
+        <p>FitTrack saves account and fitness information locally on your device so local features can work without a cloud connection. Email/password accounts have a password verifier stored locally; the verifier and plaintext password are excluded from FitTrack’s cloud snapshot.</p>
+        <p>Cloud synchronization is available for accounts linked to Firebase. When linked, FitTrack synchronizes account profile and fitness records to Firebase Authentication and Cloud Firestore so they can be restored and used across devices. A locally created email account can remain device-only unless it is linked to cloud services. Google sign-in uses Firebase Authentication and may provide your Google account email, display name, and profile photo URL.</p>
+        <p>Meal photos selected for scanning are compressed on your device, sent to the authenticated scan function for analysis, and kept only in the app’s temporary memory while you review the result. The scan function does not save or attach those photos to your food log. Food entries created by older app versions may still contain previously uploaded Firebase Storage photo links.</p>
+
+        <h2>4. How information is used</h2>
+        <p>FitTrack uses this information to provide sign-in, save and display your records, calculate the summaries and goals shown in the app, synchronize linked accounts, restore data across devices, and troubleshoot or protect the Service. We do not currently include advertising or analytics SDKs in the app.</p>
+
+        <h2>5. Service providers</h2>
+        <p>FitTrack uses Google Firebase services for authentication, cloud database synchronization, callable functions, and web hosting. Google processes information as a service provider under its terms and privacy documentation. When you choose Google sign-in, Google and Firebase may process information needed to authenticate you. See <a href="https://firebase.google.com/support/privacy">Firebase privacy and security</a> and <a href="https://policies.google.com/privacy">Google’s Privacy Policy</a>.</p>
+        <p>Before your first scan, FitTrack explains that the compressed JPEG photo and ingredient text are sent to its authenticated Firebase Cloud Function. The function sends the photo and, when needed, ingredient text to Groq for food recognition or nutrition estimates; ingredient names are sent to USDA FoodData Central for nutrition lookup. The function does not save meal photos, and the original photo is discarded after processing. USDA nutrition results are cached by food name in the FitTrack Firebase project; your photo is not included in that cache. According to <a href="https://console.groq.com/docs/your-data">Groq’s inference data controls</a>, inference inputs and outputs are not retained by default, but may be temporarily logged for system reliability or abuse monitoring for up to 30 days; Groq offers a Zero Data Retention setting. This app does not enable or control that setting, so users should review Groq’s current terms and data controls. See also <a href="https://groq.com/privacy-policy/">Groq’s Privacy Policy</a> and USDA’s applicable service terms.</p>
+        <p>When you open these public policy pages, Firebase Hosting necessarily receives the request and may process technical information needed to deliver and protect the site.</p>
+
+        <h2>6. Retention and deletion</h2>
+        <p>Locally stored records remain on the device until they are removed, the app’s data is cleared, or the device removes them. Signing out preserves the account’s local records. The app prunes dated water records after 90 days, archived daily logs after 365 entries, and dated workout history older than 365 days; other account information remains until changed or removed.</p>
+        <p>Cloud copies remain in Firebase while associated with the account unless deleted by an authorized process. FitTrack currently has no in-app control to delete an account or all cloud information. Removing a food log item does not currently delete the corresponding image file from Firebase Storage. To request deletion or ask about your information, contact <strong>[privacy contact email]</strong>. Signing out or uninstalling the app alone does not delete Firebase data.</p>
+
+        <h2>7. Security</h2>
+        <p>FitTrack uses Firebase Authentication and owner-scoped Firestore and Storage rules to restrict linked cloud data to the signed-in account. No method of local or online storage is completely secure; keep your device and account credentials protected. Local-only records are not backed up by FitTrack unless you link the account.</p>
+
+        <h2>8. Children</h2>
+        <p>FitTrack is not designed for children who are not legally able to consent to its use or to the handling of their information. A parent or guardian who believes a child has provided information should contact us so we can review the request.</p>
+
+        <h2>9. Your choices and privacy rights</h2>
+        <p>You can choose whether to use cloud-linked sign-in and whether to upload food images. Depending on where you live, you may have rights to access, correct, or request deletion of personal information. Contact <strong>[privacy contact email]</strong> to make a request. We may need to verify your identity before responding. You may also have the right to complain to your local privacy regulator.</p>
+
+        <h2>10. International processing</h2>
+        <p>Firebase services may process or store information in locations outside your country. Where required, applicable transfer safeguards are handled under the terms and mechanisms offered by the service provider and applicable law.</p>
+
+        <h2>11. Changes to this policy</h2>
+        <p>We may update this policy when the Service or applicable requirements change. The revised policy will be posted here with a new “Last updated” date.</p>
+
+        <h2>12. Contact</h2>
+        <p>Privacy contact: <strong>[privacy contact email]</strong><br>Operator: [FitTrack operator legal name]</p>
+      </article>
+      <footer class="document-footer">
+        <a href="/">FitTrack policies</a>
+        <a href="/terms">Terms of Service</a>
+        <span>© FitTrack</span>
+      </footer>
+    </main>
+  </body>
+</html>
