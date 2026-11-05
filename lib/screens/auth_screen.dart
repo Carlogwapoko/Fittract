@@ -20,10 +20,12 @@ class AuthScreen extends StatefulWidget {
   State<AuthScreen> createState() => _AuthState();
 }
 
-class _AuthState extends State<AuthScreen> {
+class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
   bool reg = false, agree = false;
   bool googleBusy = false, emailBusy = false;
+  bool _googleAuthWasBackgrounded = false;
   bool _obscurePw = true;
+  int _googleAttempt = 0;
   String err = '';
   String notice = '';
   final googleAuth = GoogleAuthService();
@@ -32,11 +34,34 @@ class _AuthState extends State<AuthScreen> {
       pw = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     nm.dispose();
     em.dispose();
     pw.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _googleAuthWasBackgrounded = true;
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed && _googleAuthWasBackgrounded) {
+      _googleAuthWasBackgrounded = false;
+      if (googleBusy && mounted) {
+        setState(() => googleBusy = false);
+      }
+    }
   }
 
   String _messageFor(AuthResult result) => switch (result) {
@@ -142,6 +167,7 @@ class _AuthState extends State<AuthScreen> {
       setState(() => err = 'Please accept the terms.');
       return;
     }
+    final attempt = ++_googleAttempt;
     setState(() {
       googleBusy = true;
       err = '';
@@ -149,6 +175,7 @@ class _AuthState extends State<AuthScreen> {
     });
     try {
       final credential = await googleAuth.signIn();
+      if (!mounted || attempt != _googleAttempt) return;
       final user = credential.user;
       if (user == null) {
         throw StateError('Google sign-in did not return an account.');
@@ -160,25 +187,29 @@ class _AuthState extends State<AuthScreen> {
         photoUrl: user.photoURL,
       );
     } on GoogleSignInException catch (error) {
-      _showGoogleError(googleAuthErrorMessage(error));
+      _showGoogleError(googleAuthErrorMessage(error), attempt);
     } on FirebaseAuthException catch (error) {
-      _showGoogleError(googleAuthErrorMessage(error));
+      _showGoogleError(googleAuthErrorMessage(error), attempt);
     } on FirebaseException catch (error) {
-      _showGoogleError(googleAuthErrorMessage(error));
+      _showGoogleError(googleAuthErrorMessage(error), attempt);
     } on StateError catch (error) {
-      _showGoogleError(googleAuthErrorMessage(error));
+      _showGoogleError(googleAuthErrorMessage(error), attempt);
     } catch (error) {
       // Anything unexpected (plugin-channel failures, unsupported
       // platforms, …) gets the generic mapped fallback: a short, safe
       // message with no raw error details, tokens or configuration text.
-      _showGoogleError(googleAuthErrorMessage(error));
+      _showGoogleError(googleAuthErrorMessage(error), attempt);
     } finally {
-      if (mounted) setState(() => googleBusy = false);
+      if (mounted && attempt == _googleAttempt) {
+        setState(() => googleBusy = false);
+      }
     }
   }
 
-  void _showGoogleError(String message) {
-    if (message.isNotEmpty && mounted) setState(() => err = message);
+  void _showGoogleError(String message, int attempt) {
+    if (attempt == _googleAttempt && message.isNotEmpty && mounted) {
+      setState(() => err = message);
+    }
   }
 
   Widget _visibilityToggle({

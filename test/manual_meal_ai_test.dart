@@ -77,7 +77,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: ManualMealScreen(aiService: ai)));
 
     expect(find.text('Ingredients'), findsOneWidget);
-    expect(find.text('AI ESTIMATE'), findsOneWidget);
+    expect(find.text('USDA + GEMINI'), findsOneWidget);
     expect(
       tester
           .widget<FilledButton>(
@@ -127,11 +127,14 @@ void main() {
       tester.widget<TextField>(_field('Calories')).controller!.text,
       '777',
     );
-    expect(tester.widget<TextField>(_field('Protein')).controller!.text, '28.2');
+    expect(
+      tester.widget<TextField>(_field('Protein')).controller!.text,
+      '28.2',
+    );
     expect(find.text('Egg'), findsOneWidget);
     expect(find.text('150 g'), findsOneWidget);
 
-    await tester.tap(find.text('Recalculate with AI'));
+    await tester.tap(find.text('Recalculate nutrition'));
     await tester.pumpAndSettle();
     expect(
       tester.widget<TextField>(_field('Calories')).controller!.text,

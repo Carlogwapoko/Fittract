@@ -1,8 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
 final class MealIngredient {
@@ -86,8 +86,20 @@ abstract interface class FoodAiService {
   );
 }
 
-final class FirebaseFoodAiService implements FoodAiService {
-  const FirebaseFoodAiService();
+final class FoodAiException implements Exception {
+  const FoodAiException(this.code, this.message);
+
+  final String code;
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+final class WorkerFoodAiService implements FoodAiService {
+  const WorkerFoodAiService();
+
+  static const _workerUrl = String.fromEnvironment('FOOD_API_URL');
 
   @override
   Future<Uint8List> compressPhoto(Uint8List imageBytes) async {
@@ -137,10 +149,16 @@ final class FirebaseFoodAiService implements FoodAiService {
       'imageBase64': base64Encode(jpegBytes),
       'mimeType': 'image/jpeg',
     });
-    final isFood = data['is_food'] == true;
+    if (data['is_food'] is! bool || data['meal_name'] is! String) {
+      throw const FormatException('Food scan returned invalid meal data.');
+    }
+    final isFood = data['is_food'] as bool;
     final ingredients = isFood
         ? _readIngredients(data['ingredients'])
         : const <MealIngredient>[];
+    if (isFood && ingredients.isEmpty) {
+      throw const FormatException('No ingredients were recognized. Try again.');
+    }
     final rawNutrition = data['nutrition'];
     return MealScanResult(
       isFood: isFood,
@@ -169,10 +187,13 @@ final class FirebaseFoodAiService implements FoodAiService {
           .toList(),
     });
     final nutrition = data['nutrition'];
-    if (nutrition is! Map) {
+    if (nutrition is! Map || data['ingredients'] is! List) {
       throw const FormatException('Nutrition service returned invalid data.');
     }
-    return _readNutrition(Map<String, dynamic>.from(nutrition));
+    return _readNutrition({
+      ...Map<String, dynamic>.from(nutrition),
+      'ingredients': data['ingredients'],
+    });
   }
 
   @override
@@ -195,28 +216,86 @@ final class FirebaseFoodAiService implements FoodAiService {
   }
 
   Future<Map<String, dynamic>> _call(Map<String, Object?> data) async {
+    if (_workerUrl.isEmpty) {
+      throw const FoodAiException(
+        'configuration',
+        'Food scanning is not configured in this app build.',
+      );
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw const FoodAiException(
+        'unauthenticated',
+        'Sign in to scan food. You can still add a meal manually.',
+      );
+    }
+    final token = await user.getIdToken();
+    if (token == null || token.isEmpty) {
+      throw const FoodAiException(
+        'unauthenticated',
+        'Sign in again to scan food.',
+      );
+    }
+
+    final Uri endpoint;
     try {
-      if (FirebaseAuth.instance.currentUser == null) {
-        throw FirebaseFunctionsException(
-          code: 'unauthenticated',
-          message: 'Sign in to scan food. You can still add a meal manually.',
+      endpoint = Uri.parse(_workerUrl);
+      if (!endpoint.hasScheme ||
+          !endpoint.hasAuthority ||
+          endpoint.scheme != 'https') {
+        throw const FormatException();
+      }
+    } on FormatException {
+      throw const FoodAiException(
+        'configuration',
+        'The food service URL is invalid in this app build.',
+      );
+    }
+
+    try {
+      final response = await http
+          .post(
+            endpoint,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(data),
+          )
+          .timeout(const Duration(seconds: 120));
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } on FormatException {
+        throw const FoodAiException(
+          'data-loss',
+          'The food service returned an invalid response.',
         );
       }
-      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable(
-            'scanMeal',
-            options: HttpsCallableOptions(
-              timeout: const Duration(seconds: 120),
-            ),
-          );
-      final response = await callable.call(data);
-      return Map<String, dynamic>.from(response.data as Map);
-    } on FirebaseFunctionsException catch (error) {
-      debugPrint(
-        'scanMeal callable failed: code=${error.code}, '
-        'message=${error.message}, details=${error.details}',
+      if (decoded is! Map) {
+        throw const FoodAiException(
+          'data-loss',
+          'The food service returned an invalid response.',
+        );
+      }
+      final result = Map<String, dynamic>.from(decoded);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final error = result['error'];
+        final code = error is Map && error['code'] is String
+            ? error['code'] as String
+            : 'unavailable';
+        final message = error is Map && error['message'] is String
+            ? error['message'] as String
+            : 'The food service could not complete the request.';
+        throw FoodAiException(code, message);
+      }
+      return result;
+    } on http.ClientException {
+      throw const FoodAiException(
+        'unavailable',
+        'Could not reach the food service. Check your connection and try again.',
       );
-      rethrow;
     }
   }
 
@@ -226,22 +305,41 @@ final class FirebaseFoodAiService implements FoodAiService {
         'Scan service returned an invalid ingredient list.',
       );
     }
-    return [
-      for (final item in raw)
-        if (item is Map &&
-            item['name'] is String &&
-            item['amount'] is num &&
-            item['unit'] is String)
-          MealIngredient(
-            name: (item['name'] as String).trim(),
-            amount: (item['amount'] as num).toDouble(),
-            unit: _unit(item['unit']),
-            source: item['source'] is String ? item['source'] as String : null,
-          ),
-    ];
+    return raw.map((item) {
+      if (item is! Map ||
+          item['name'] is! String ||
+          item['amount'] is! num ||
+          item['unit'] is! String) {
+        throw const FormatException(
+          'Food service returned an invalid ingredient.',
+        );
+      }
+      final name = (item['name'] as String).trim();
+      final amount = (item['amount'] as num).toDouble();
+      final unit = item['unit'] as String;
+      if (name.isEmpty ||
+          name.length > 80 ||
+          !amount.isFinite ||
+          amount <= 0 ||
+          amount > 10000 ||
+          !{'g', 'ml', 'pcs'}.contains(unit)) {
+        throw const FormatException(
+          'Food service returned an invalid ingredient.',
+        );
+      }
+      return MealIngredient(
+        name: name,
+        amount: amount,
+        unit: unit,
+        source: item['source'] is String ? item['source'] as String : null,
+      );
+    }).toList();
   }
 
   NutritionEstimate _readNutrition(Map<String, dynamic> data) {
+    if (data['has_ai_fallback'] is! bool || data['ingredients'] is! List) {
+      throw const FormatException('Nutrition service returned invalid data.');
+    }
     double read(String key) {
       final value = data[key];
       if (value is! num || !value.isFinite || value < 0) {
@@ -255,22 +353,18 @@ final class FirebaseFoodAiService implements FoodAiService {
       protein: read('protein'),
       carbs: read('carbs'),
       fat: read('fat'),
-      hasAiFallback: data['has_ai_fallback'] == true,
-      ingredients: data['ingredients'] is List
-          ? _readIngredients(data['ingredients'])
-          : const [],
+      hasAiFallback: data['has_ai_fallback'] as bool,
+      ingredients: _readIngredients(data['ingredients']),
     );
   }
 
-  String _mealType(Object? value) => switch (value) {
-    'Breakfast' || 'Lunch' || 'Snack' || 'Dinner' => value as String,
-    _ => 'Lunch',
-  };
-
-  String _unit(Object? value) => switch (value) {
-    'g' || 'ml' || 'pcs' => value as String,
-    _ => 'g',
-  };
+  String _mealType(Object? value) {
+    if (value is String &&
+        {'Breakfast', 'Lunch', 'Snack', 'Dinner'}.contains(value)) {
+      return value;
+    }
+    throw const FormatException('Food scan returned an invalid meal type.');
+  }
 }
 
 String _formatAmount(double value) => value == value.roundToDouble()

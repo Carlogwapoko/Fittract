@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fittract/main.dart';
+import 'package:fittract/services/google_auth_service.dart';
 import 'package:fittract/store/store.dart';
 
 void main() {
@@ -461,6 +464,73 @@ void main() {
       expect(store.hasActiveSession, isTrue);
       expect(store.d['user'], 'reg@example.com');
       expect(store.d['name'], 'Test User');
+    },
+  );
+
+  testWidgets(
+    'Returning from cancelled Google auth clears busy for login and sign up',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await store.init();
+
+      final pendingSignIns = <Completer<UserCredential>>[];
+      GoogleAuthService.debugSignInOverride = () {
+        final pending = Completer<UserCredential>();
+        pendingSignIns.add(pending);
+        return pending.future;
+      };
+      addTearDown(GoogleAuthService.resetGoogleSignInInitializationForTesting);
+
+      Future<void> cancelExternalAuth() async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+      }
+
+      await tester.pumpWidget(const App());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Continue with Google'));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await cancelExternalAuth();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Continue with Google'), findsOneWidget);
+      pendingSignIns.last.completeError(
+        const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('New here? Create an account'));
+      await tester.tap(find.text('New here? Create an account'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terms-checkbox')));
+      await tester.pump();
+      await tester.ensureVisible(find.text('Sign up with Google'));
+      await tester.tap(find.text('Sign up with Google'));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await cancelExternalAuth();
+      pendingSignIns.last.completeError(
+        const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Sign up with Google'), findsOneWidget);
+      expect(pendingSignIns, hasLength(2));
+      expect(store.hasActiveSession, isFalse);
+      expect(tester.takeException(), isNull);
     },
   );
 

@@ -14,6 +14,9 @@ class GoogleAuthService {
   static Future<void> Function()? debugSignOutOverride;
 
   @visibleForTesting
+  static Future<UserCredential> Function()? debugSignInOverride;
+
+  @visibleForTesting
   static Future<void> Function()? debugGoogleSignInInitializeOverride;
 
   @visibleForTesting
@@ -23,6 +26,7 @@ class GoogleAuthService {
   @visibleForTesting
   static void resetGoogleSignInInitializationForTesting() {
     _googleSignInInitialization = null;
+    debugSignInOverride = null;
     debugGoogleSignInInitializeOverride = null;
   }
 
@@ -45,6 +49,9 @@ class GoogleAuthService {
   }
 
   Future<UserCredential> signIn() async {
+    final override = debugSignInOverride;
+    if (override != null) return override();
+
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,

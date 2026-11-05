@@ -1,0 +1,6 @@
+name = "fittrack-food-api"
+main = "index.js"
+compatibility_date = "2026-11-05"
+
+[vars]
+FIREBASE_PROJECT_ID = "fittrack-mydatabase"

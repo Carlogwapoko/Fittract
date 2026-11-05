@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -508,7 +507,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   int _photoMatchRequest = 0;
 
   FoodAiService get _aiService =>
-      widget.aiService ?? const FirebaseFoodAiService();
+      widget.aiService ?? const WorkerFoodAiService();
 
   @override
   void dispose() {
@@ -771,10 +770,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                             ? null
                             : () => _calculateNutrition(force: true),
                         icon: const Icon(Icons.refresh, size: 18),
-                        label: const Text('Recalculate with AI'),
+                        label: const Text('Recalculate nutrition'),
                       ),
                       Text(
-                        'AI ESTIMATE',
+                        'USDA + GEMINI',
                         style: TextStyle(
                           color: primaryOf(context),
                           fontSize: 11,
@@ -799,7 +798,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                   const Padding(
                     padding: EdgeInsets.only(top: kGapXs),
                     child: Text(
-                      'Some ingredient values are AI estimates because USDA data was unavailable.',
+                      'Some ingredient values are Gemini estimates because USDA data was unavailable.',
                       style: muted,
                     ),
                   ),
@@ -814,7 +813,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                         SizedBox(width: kGapSm),
-                        Text('Calculating with AI…', style: muted),
+                        Text('Calculating nutrition…', style: muted),
                       ],
                     ),
                   ),
@@ -968,10 +967,15 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
               ),
             ),
           ),
-          if (ingredient.source == 'AI estimate')
-            const Padding(
-              padding: EdgeInsets.only(right: kGapXs),
-              child: Text('AI estimate', style: muted),
+          if (ingredient.source != null)
+            Padding(
+              padding: const EdgeInsets.only(right: kGapXs),
+              child: Text(
+                ingredient.source == 'USDA FoodData Central'
+                    ? 'USDA'
+                    : 'Gemini estimate',
+                style: muted,
+              ),
             ),
           IconButton(
             tooltip: 'Edit ${ingredient.name}',
@@ -1059,6 +1063,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   );
 
   Future<void> _editIngredient({int? index}) async {
+    if (index == null && _ingredients.length >= 30) {
+      snack(context, 'A meal can have no more than 30 ingredients.');
+      return;
+    }
     final current = index == null ? null : _ingredients[index];
     final result = await showDialog<MealIngredient>(
       context: context,
@@ -1172,8 +1180,8 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
           }
         }
       });
-    } on FirebaseFunctionsException catch (error) {
-      _setNutritionFailure(request, _friendlyFunctionError(error));
+    } on FoodAiException catch (error) {
+      _setNutritionFailure(request, _friendlyWorkerError(error));
     } on FirebaseException {
       _setNutritionFailure(request);
     } on FormatException {
@@ -1181,6 +1189,9 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     } on TimeoutException {
       _setNutritionFailure(request);
     } on StateError {
+      _setNutritionFailure(request);
+    } on Exception catch (error) {
+      debugPrint('Nutrition request failed: $error');
       _setNutritionFailure(request);
     }
   }
@@ -1240,13 +1251,16 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         _showPhotoMismatch = !matches;
         _keepPhotoMismatch = false;
       });
-    } on FirebaseFunctionsException {
+    } on FoodAiException {
       _setPhotoMatchFailure(request);
     } on FirebaseException {
       _setPhotoMatchFailure(request);
     } on FormatException {
       _setPhotoMatchFailure(request);
     } on TimeoutException {
+      _setPhotoMatchFailure(request);
+    } on Exception catch (error) {
+      debugPrint('Photo ingredient comparison failed: $error');
       _setPhotoMatchFailure(request);
     }
   }
@@ -1272,7 +1286,8 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
 
   Future<bool> _confirmScanPrivacy() async {
     final preferences = await SharedPreferences.getInstance();
-    if (preferences.getBool('food_scan_privacy_notice_accepted') == true) {
+    if (preferences.getBool('food_scan_privacy_notice_accepted_gemini') ==
+        true) {
       return true;
     }
     if (!mounted) return false;
@@ -1282,11 +1297,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         title: const Text('A note about food scanning'),
         content: const Text(
           'Your compressed meal photo and ingredient text are sent securely '
-          'to Groq for food recognition and, when needed, nutrition estimates. '
-          'Ingredient names are also sent to USDA FoodData Central. Groq says '
-          'inference data is not retained by default, but may be temporarily '
-          'logged for reliability or abuse monitoring. The scan service does '
-          'not store your photo.',
+          'to Google Gemini for food recognition and ingredient comparison. '
+          'Ingredient names are sent to USDA FoodData Central for nutrition '
+          'data; Gemini may estimate values when USDA has no match. The '
+          'Cloudflare Worker processes the photo in memory and does not store it.',
         ),
         actions: [
           TextButton(
@@ -1301,7 +1315,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       ),
     );
     if (accepted == true) {
-      await preferences.setBool('food_scan_privacy_notice_accepted', true);
+      await preferences.setBool(
+        'food_scan_privacy_notice_accepted_gemini',
+        true,
+      );
       return true;
     }
     return false;
@@ -1465,8 +1482,8 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         _scanError = null;
       });
       _ingredientsChanged();
-    } on FirebaseFunctionsException catch (error) {
-      _setScanFailure(request, _friendlyFunctionError(error));
+    } on FoodAiException catch (error) {
+      _setScanFailure(request, _friendlyWorkerError(error));
     } on FirebaseException {
       _setScanFailure(request);
     } on TimeoutException {
@@ -1474,6 +1491,9 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     } on FormatException catch (error) {
       _setScanFailure(request, error.message);
     } on StateError {
+      _setScanFailure(request);
+    } on Exception catch (error) {
+      debugPrint('Meal photo scan failed: $error');
       _setScanFailure(request);
     }
   }
@@ -1486,16 +1506,15 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     });
   }
 
-  String _friendlyFunctionError(FirebaseFunctionsException error) =>
-      switch (error.code) {
-        'resource-exhausted' =>
-          'The food service is busy right now. Please try again in a moment.',
-        'unavailable' || 'deadline-exceeded' => 'Could not reach the food service. Check your connection or enter ingredients and nutrition manually.',
-        'not-found' =>
-          'Food scanning is not available on the server yet. You can still add ingredients and nutrition manually.',
-        'unauthenticated' => 'Sign in to scan food. You can still add ingredients and nutrition manually.',
-        _ => error.message ?? 'Food scanning is unavailable. Try again or add ingredients manually.',
-      };
+  String _friendlyWorkerError(FoodAiException error) => switch (error.code) {
+    'resource-exhausted' =>
+      'The food service is busy right now. Please try again in a moment.',
+    'unavailable' => 'Could not reach the food service. Check your connection or enter ingredients and nutrition manually.',
+    'not-found' => 'Food scanning is not available on the server yet. You can still add ingredients and nutrition manually.',
+    'unauthenticated' => 'Sign in to scan food. You can still add ingredients and nutrition manually.',
+    'configuration' => error.message,
+    _ => error.message.isNotEmpty ? error.message : 'Food scanning is unavailable. Try again or add ingredients manually.',
+  };
 
   String _formatAmount(double value) => value == value.roundToDouble()
       ? value.toStringAsFixed(0)
@@ -1587,6 +1606,7 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
   }
 
   late String _unit;
+  String? _error;
 
   @override
   void dispose() {
@@ -1634,6 +1654,16 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
             if (value != null) setState(() => _unit = value);
           },
         ),
+        if (_error != null) ...[
+          const SizedBox(height: kGapSm),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        ],
       ],
     ),
     actions: [
@@ -1645,7 +1675,21 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
         onPressed: () {
           final name = _name.text.trim();
           final amount = double.tryParse(_amount.text.trim());
-          if (name.isEmpty || amount == null || amount <= 0) return;
+          if (name.isEmpty || name.length > 80) {
+            setState(() {
+              _error = 'Enter an ingredient name of 1–80 characters.';
+            });
+            return;
+          }
+          if (amount == null ||
+              !amount.isFinite ||
+              amount <= 0 ||
+              amount > 10000) {
+            setState(() {
+              _error = 'Enter an amount greater than 0 and no more than 10000.';
+            });
+            return;
+          }
           Navigator.pop(
             context,
             MealIngredient(name: name, amount: amount, unit: _unit),

@@ -80,44 +80,85 @@ operator name, privacy contact email, and governing jurisdiction. Replace
 those placeholders and review the policies for legal accuracy before treating
 them as final.
 
-Manual meal entry can scan a compressed meal photo through the authenticated
-Firebase callable Cloud Function `scanMeal` in `us-central1`. Groq's
-OpenAI-compatible API uses the vision-capable `qwen/qwen3.8-27b` model by
-default (override with the Functions environment variable `GROQ_MODEL`) to
-identify food and estimate nutrition when USDA has no match. The app puts
-detected ingredients directly into the editable list and recalculates nutrition
-after 700 ms of ingredient or amount changes. USDA FoodData Central supplies
-per-100 g values. Successful USDA and AI nutrition results are cached by
-ingredient name in Firestore when available; cache failures do not block
-nutrition calculation. Photos and ingredient text are sent to the backend for
-analysis; the photo is processed in memory, not stored by the function, and is
-not attached to the food log. Groq says inference data is not retained by
-default, but inputs and outputs may be temporarily logged for reliability or
-abuse monitoring for up to 30 days; its Zero Data Retention setting is available
-in the Groq console. FitTrack does not configure that provider setting. The app
-shows a one-time notice before the first scan. Meals without an attached photo
-continue to use their food-category icon (or the bundled photo for a
-ready-made meal).
+Manual meal entry uses the authenticated Cloudflare Worker in `worker/`.
+Firebase Authentication ID tokens are verified against Google's Firebase
+Secure Token signing keys. The Worker sends food photos to Google Gemini for
+food/ingredient recognition and for comparing edited ingredients with the
+photo. It queries USDA FoodData Central for per-100 g calories, protein,
+carbohydrates, and fat, then scales those values by the ingredient amounts.
+Gemini estimates are clearly identified when USDA has no matching data.
+Detected ingredients and quantities remain editable before saving. Meal
+records continue to use the existing Firestore-backed store format and meal
+history; the Worker does not write meal records to Firestore or retain photos.
+The app shows a one-time privacy notice before the first scan. Quantities in
+millilitres are treated as approximately 1 ml = 1 g; countable items use
+estimated piece weights.
 
-To enable scanning, install the dependencies in `functions/`, create free-tier
-API keys for Groq and USDA FoodData Central, then store them as Firebase
-Functions secrets (never in Flutter code):
+### Deploy the food API
+
+Install Node.js 20+ and the Wrangler CLI through the Worker package. From
+PowerShell:
 
 ```powershell
-firebase functions:secrets:set GROQ_API_KEY
-firebase functions:secrets:set USDA_API_KEY
-firebase deploy --only functions:scanMeal
-# After redeploying, remove the old secret if no other function uses it:
-firebase functions:secrets:destroy GEMINI_API_KEY
+cd .\worker
+npm install
+npx wrangler login
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put USDA_API_KEY
+npx wrangler deploy
 ```
 
-The function requires a Firebase-authenticated user. Cloud Functions
-deployment requires a Firebase project with billing enabled; the APIs have
-free or limited free tiers, but usage beyond provider or Firebase quotas can
-incur charges. See the [Groq data controls](https://console.groq.com/docs/your-data)
-and [privacy policy](https://groq.com/privacy-policy/) for current processing
-and retention terms. If scanning or nutrition calculation is unavailable,
-users can enter ingredients and nutrition manually and retry.
+Enter each key only at Wrangler's secure prompt. The Firebase project ID is a
+non-secret Worker variable in `worker/wrangler.toml`. Do not put provider keys
+in Flutter, `.dart` files, source control, or build arguments. `wrangler deploy`
+prints the Worker URL; enable the account's `workers.dev` subdomain if needed.
+Verify the public health endpoint, replacing the host with the URL printed by
+Wrangler:
+
+```powershell
+Invoke-RestMethod https://fittrack-food-api.<your-account>.workers.dev/health
+```
+
+The expected response is `{"status":"ok"}`. From the `worker/` directory, run
+the Worker endpoint and Firebase-token verification tests with:
+
+```powershell
+npm test
+```
+
+Pass the deployed `/api/food` URL into the Flutter build as a public endpoint
+(it contains no secret):
+
+```powershell
+cd ..
+flutter run --dart-define="FOOD_API_URL=https://fittrack-food-api.<your-account>.workers.dev/api/food"
+```
+
+Use the same `--dart-define=FOOD_API_URL=...` when producing release builds.
+For example:
+
+```powershell
+flutter build appbundle --dart-define="FOOD_API_URL=https://fittrack-food-api.<your-account>.workers.dev/api/food"
+```
+
+Then sign in to FitTrack, open **Food & meals → Log food → Add food manually**,
+scan a food photo, review/edit the detected ingredient names and quantities,
+and verify nutrition recalculates after edits. Also add an ingredient
+manually, confirm USDA nutrition appears, and save the meal; confirm it appears
+in meal history and remains after restarting the app or syncing another signed
+in device. To verify the API's authenticated behavior independently, invoke
+`POST /api/food` with a current Firebase ID token in the `Authorization:
+Bearer <token>` header and an `action` of `scan`, `nutrition`, or `match`.
+Unauthenticated requests should return HTTP 401. Never paste or log a real ID
+token in a terminal transcript, issue, or repository.
+
+The Worker accepts `POST /api/food` with `action` `scan` (`imageBase64` and
+`mimeType`), `nutrition` (`ingredients`), or `match` (photo fields and the
+user-edited `ingredients` list).
+
+If scanning or nutrition calculation is unavailable, users can still enter
+ingredients and nutrition manually and retry. Provider quotas and pricing are
+subject to Google's, USDA's, and Cloudflare's current service terms.
 
 ## Production release blockers
 
@@ -131,9 +172,8 @@ is intentionally left as `com.example.fittract` for now.
 
 There is no notification plugin dependency in `pubspec.yaml` or
 `pubspec.lock` (no `flutter_local_notifications` or equivalent), and no
-scheduling code. Adding a dependency requires `flutter pub get`, which was
-outside the scope of this source-only change, so **system notifications and
-recurring notification schedules are not available**.
+scheduling code, so **system notifications and recurring notification
+schedules are not available**.
 
 What exists instead is honest in-app reminder UI:
 
@@ -143,7 +183,7 @@ What exists instead is honest in-app reminder UI:
   system notifications are not available yet.
 
 To implement real reminders later: pick a notification plugin, add it to
-`pubspec.yaml`, run dependency resolution, request POST_NOTIFICATIONS on
+`pubspec.yaml`, run `flutter pub get`, request POST_NOTIFICATIONS on
 Android 13+, store a notification ID per schedule entry, and
 schedule/cancel/update notifications alongside every `store.sch` mutation,
 including recurrence rules and past-time handling.
