@@ -1555,6 +1555,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       'ingredients': [
         for (final ingredient in _ingredients) ingredient.toJson(),
       ],
+      'hasAiNutritionFallback': _hasAiNutritionFallback,
       'k': calories.round(),
       'p': protein.round(),
       'c': carbs.round(),

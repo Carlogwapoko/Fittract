@@ -3,9 +3,12 @@ const FIREBASE_JWKS_URL =
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const MAX_IMAGE_BYTES = 1024 * 1024;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const USDA_CACHE_TTL_MS = 30 * 60 * 1000;
+const MAX_USDA_CACHE_ENTRIES = 256;
 const VALID_TYPES = new Set(['Breakfast', 'Lunch', 'Snack', 'Dinner']);
 const VALID_UNITS = new Set(['g', 'ml', 'pcs']);
 const MACRO_IDS = {calories: 1008, protein: 1003, carbs: 1005, fat: 1004};
+const usdaNutritionCache = new Map();
 
 export default {
   fetch(request, env) {
@@ -403,6 +406,11 @@ async function calculateNutrition(ingredients, env, fetchImpl) {
 }
 
 async function findUsdaNutrition(name, env, fetchImpl) {
+  const cacheKey = normalizeFoodName(name);
+  const cached = usdaNutritionCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.nutrition;
+  if (cached) usdaNutritionCache.delete(cacheKey);
+
   const url = new URL('https://api.nal.usda.gov/fdc/v1/foods/search');
   url.searchParams.set('query', name);
   url.searchParams.set('dataType', 'Foundation,SR Legacy');
@@ -414,17 +422,47 @@ async function findUsdaNutrition(name, env, fetchImpl) {
   }
   const result = await response.json();
   const food = selectUsdaFood(result.foods, name);
-  if (!food || !Array.isArray(food.foodNutrients)) return null;
-  const nutrients = new Map(
-    food.foodNutrients.map((nutrient) => [
-      Number(nutrient.nutrientId ?? nutrient.nutrientNumber),
-      Number(nutrient.value),
-    ]),
-  );
+  let nutrition = null;
+  if (food && Number.isInteger(Number(food.fdcId)) && Number(food.fdcId) > 0) {
+    const detailUrl = new URL(
+      `https://api.nal.usda.gov/fdc/v1/food/${Number(food.fdcId)}`,
+    );
+    detailUrl.searchParams.set('api_key', env.USDA_API_KEY);
+    const detailResponse = await fetchWithTimeout(fetchImpl, detailUrl, {}, 15000);
+    if (!detailResponse.ok) {
+      throw new Error(`USDA food detail returned HTTP ${detailResponse.status}.`);
+    }
+    const detail = await detailResponse.json();
+    nutrition = readUsdaNutrition(detail.foodNutrients);
+  }
+
+  if (usdaNutritionCache.size >= MAX_USDA_CACHE_ENTRIES) {
+    usdaNutritionCache.delete(usdaNutritionCache.keys().next().value);
+  }
+  usdaNutritionCache.set(cacheKey, {
+    nutrition,
+    expiresAt: Date.now() + USDA_CACHE_TTL_MS,
+  });
+  return nutrition;
+}
+
+function readUsdaNutrition(foodNutrients) {
+  if (!Array.isArray(foodNutrients)) return null;
+  const nutrients = new Map();
+  for (const item of foodNutrients) {
+    const id = Number(
+      item.nutrient?.id ?? item.nutrientId ?? item.nutrientNumber,
+    );
+    const value = Number(item.amount ?? item.value);
+    if (Number.isFinite(id) && Number.isFinite(value)) {
+      nutrients.set(id, value);
+    }
+  }
   const calories =
     nutrients.get(MACRO_IDS.calories) ??
     nutrients.get(2047) ??
-    (nutrients.has(2048) ? nutrients.get(2048) / 4.184 : undefined);
+    nutrients.get(2048) ??
+    (nutrients.has(1062) ? nutrients.get(1062) / 4.184 : undefined);
   const nutrition = {
     calories,
     protein: nutrients.get(MACRO_IDS.protein),
@@ -436,27 +474,72 @@ async function findUsdaNutrition(name, env, fetchImpl) {
 
 function selectUsdaFood(foods, ingredientName) {
   if (!Array.isArray(foods)) return null;
-  const normalize = (value) =>
-    value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  const query = normalize(ingredientName);
+  const query = normalizeFoodName(ingredientName);
   if (!query) return null;
   const tokens = new Set(query.split(/\s+/).filter(Boolean));
+  const preparationTerms = new Set([
+    'baked', 'boiled', 'cooked', 'dried', 'fried', 'grilled', 'raw',
+    'roasted', 'steamed',
+  ]);
+  const queryPreparation = [...tokens].find((token) =>
+    preparationTerms.has(token),
+  );
+  const commonFoodTerms = new Set([
+    'and', 'fresh', 'food', 'of', 'or', 'regular', 'with',
+  ]);
   const best = foods
-    .filter((food) => Array.isArray(food.foodNutrients))
+    .filter((food) => {
+      const dataType = String(food.dataType ?? '').toLowerCase();
+      return (
+        Number.isInteger(Number(food.fdcId)) &&
+        Number(food.fdcId) > 0 &&
+        !dataType.includes('branded') &&
+        !food.brandName &&
+        !food.brandOwner
+      );
+    })
     .map((food) => {
-      const description = normalize(food.description ?? '');
+      const description = normalizeFoodName(food.description ?? '');
       const descriptionTokens = new Set(description.split(/\s+/).filter(Boolean));
       const overlap = [...tokens].filter((token) => descriptionTokens.has(token)).length;
+      const coreTokens = [...tokens].filter(
+        (token) => !preparationTerms.has(token) && !commonFoodTerms.has(token),
+      );
+      const coreOverlap = coreTokens.filter((token) =>
+        descriptionTokens.has(token),
+      ).length;
+      const unmatchedDescriptionTokens = [...descriptionTokens].filter(
+        (token) =>
+          !tokens.has(token) &&
+          !commonFoodTerms.has(token) &&
+          !preparationTerms.has(token),
+      ).length;
+      const descriptionPreparation = [...descriptionTokens].find((token) =>
+        preparationTerms.has(token),
+      );
       return {
         food,
         score:
-          (description === query ? 100 : 0) +
-          (description.includes(query) || query.includes(description) ? 20 : 0) +
-          overlap / Math.max(tokens.size, 1),
+          (description === query ? 1000 : 0) +
+          (coreTokens.length > 0 && coreOverlap === coreTokens.length ? 100 : 0) +
+          40 * (coreOverlap / Math.max(coreTokens.length, 1)) +
+          (queryPreparation && descriptionPreparation === queryPreparation
+            ? 24
+            : queryPreparation && descriptionPreparation
+              ? -24
+              : 0) +
+          overlap / Math.max(tokens.size, 1) -
+          unmatchedDescriptionTokens * 2,
+        coreCoverage: coreOverlap / Math.max(coreTokens.length, 1),
       };
     })
+    .filter((candidate) => candidate.coreCoverage >= 0.5)
     .sort((left, right) => right.score - left.score)[0];
-  return best && best.score > 0 ? best.food : null;
+  return best ? best.food : null;
+}
+
+function normalizeFoodName(value) {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
 async function estimateMissingNutrition(ingredients, env, fetchImpl) {

@@ -31,19 +31,62 @@ function fakeFetch(url, init) {
   if (target.includes('service_accounts/v1/jwk')) {
     return Promise.resolve(Response.json({keys: [publicJwk]}));
   }
-  if (target.includes('foods/search')) {
+  if (target.includes('/foods/search')) {
     const parsedUrl = new URL(target);
     assert.equal(parsedUrl.searchParams.get('api_key'), 'test-usda-key');
-    return Promise.resolve(Response.json({
-      foods: [{
-        description: 'cooked rice',
-        foodNutrients: [
-          {nutrientId: 1008, value: 130},
-          {nutrientId: 1003, value: 2.7},
-          {nutrientId: 1005, value: 28},
-          {nutrientId: 1004, value: 0.3},
+    assert.equal(parsedUrl.searchParams.get('pageSize'), '5');
+    assert.equal(parsedUrl.searchParams.get('dataType'), 'Foundation,SR Legacy');
+    const query = parsedUrl.searchParams.get('query');
+    if (query === 'mango') {
+      return Promise.resolve(Response.json({foods: []}));
+    }
+    if (query === 'raw spinach') {
+      return Promise.resolve(Response.json({
+        foods: [
+          {
+            fdcId: 456,
+            description: 'Spinach, cooked, boiled, drained',
+            dataType: 'SR Legacy',
+          },
+          {
+            fdcId: 457,
+            description: 'Spinach, raw',
+            dataType: 'SR Legacy',
+          },
         ],
-      }],
+      }));
+    }
+    return Promise.resolve(Response.json({
+      foods: [
+        {
+          fdcId: 123,
+          description: 'Rice and chicken ready meal',
+          dataType: 'Branded',
+          brandName: 'Example Brand',
+        },
+        {
+          fdcId: 321,
+          description: 'Rice, white, long-grain, regular, cooked',
+          dataType: 'SR Legacy',
+        },
+      ],
+    }));
+  }
+  if (target.includes('/food/')) {
+    const parsedUrl = new URL(target);
+    assert.equal(parsedUrl.searchParams.get('api_key'), 'test-usda-key');
+    const fdcId = parsedUrl.pathname.split('/').pop();
+    const macros = fdcId === '457'
+      ? [23, 2.9, 3.6, 0.4]
+      : [130, 2.7, 28, 0.3];
+    return Promise.resolve(Response.json({
+      fdcId: Number(fdcId),
+      foodNutrients: [
+        {nutrient: {id: 1008}, amount: macros[0]},
+        {nutrient: {id: 1003}, amount: macros[1]},
+        {nutrient: {id: 1005}, amount: macros[2]},
+        {nutrient: {id: 1004}, amount: macros[3]},
+      ],
     }));
   }
   if (target.includes('generateContent')) {
@@ -123,7 +166,7 @@ test('scan endpoint sends a valid photo to Gemini and returns detected ingredien
   assert.equal(result.ingredients[0].name, 'cooked rice');
 });
 
-test('nutrition endpoint retrieves USDA values and scales totals by grams', async () => {
+test('nutrition uses a generic USDA detail record and scales values by grams', async () => {
   const response = await handleRequest(
     new Request('https://food.example.workers.dev/api/food', {
       method: 'POST',
@@ -146,6 +189,34 @@ test('nutrition endpoint retrieves USDA values and scales totals by grams', asyn
     protein: 5.4,
     carbs: 56,
     fat: 0.6,
+    has_ai_fallback: false,
+  });
+  assert.equal(result.ingredients[0].source, 'USDA FoodData Central');
+});
+
+test('nutrition prefers a raw record for raw ingredients', async () => {
+  const response = await handleRequest(
+    new Request('https://food.example.workers.dev/api/food', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${makeToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'nutrition',
+        ingredients: [{name: 'raw spinach', amount: 100, unit: 'g'}],
+      }),
+    }),
+    env,
+    fakeFetch,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.deepEqual(result.nutrition, {
+    calories: 23,
+    protein: 2.9,
+    carbs: 3.6,
+    fat: 0.4,
     has_ai_fallback: false,
   });
   assert.equal(result.ingredients[0].source, 'USDA FoodData Central');

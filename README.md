@@ -84,9 +84,12 @@ Manual meal entry uses the authenticated Cloudflare Worker in `worker/`.
 Firebase Authentication ID tokens are verified against Google's Firebase
 Secure Token signing keys. The Worker sends food photos to Google Gemini for
 food/ingredient recognition and for comparing edited ingredients with the
-photo. It queries USDA FoodData Central for per-100 g calories, protein,
-carbohydrates, and fat, then scales those values by the ingredient amounts.
-Gemini estimates are clearly identified when USDA has no matching data.
+photo. For nutrition it searches the USDA FoodData Central Foundation and SR
+Legacy datasets (five results), selects the closest generic/raw-or-cooked food,
+then fetches that food's detail record for per-100 g calories, protein,
+carbohydrates, and fat. Those values are scaled by each ingredient's weight;
+repeated USDA lookups are cached briefly in the Worker. Gemini estimates are
+clearly identified when USDA has no matching data.
 Detected ingredients and quantities remain editable before saving. Meal
 records continue to use the existing Firestore-backed store format and meal
 history; the Worker does not write meal records to Firestore or retain photos.

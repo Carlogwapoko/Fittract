@@ -473,9 +473,45 @@ void main() {
     expect(store.goal['w'], 72.0);
   });
 
+  testWidgets('Food history displays saved ingredient quantities', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.meals
+      ..clear()
+      ..add({
+        't': 'Lunch',
+        'n': 'Homemade soup',
+        'desc': '',
+        'ingredients': [
+          {
+            'name': 'Tomato',
+            'amount': 100.0,
+            'unit': 'g',
+            'source': 'Gemini estimate',
+          },
+        ],
+        'hasAiNutritionFallback': true,
+        'k': 240,
+        'p': 14,
+        'c': 32,
+        'f': 5,
+      });
+
+    await tester.pumpWidget(const MaterialApp(home: FoodScreen()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ingredients: Tomato 100 g'), findsOneWidget);
+    expect(find.text('Includes estimated nutrition'), findsOneWidget);
+  });
+
   testWidgets('Food screen offers preset and manual meal logging', (
     WidgetTester tester,
   ) async {
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     SharedPreferences.setMockInitialValues({});
     await store.init();
     store.meals.clear();
@@ -534,6 +570,14 @@ void main() {
       await tester.ensureVisible(field);
       await tester.enterText(field, value);
     }
+    await tester.ensureVisible(find.text('Add ingredient'));
+    await tester.tap(find.text('Add ingredient'));
+    await tester.pumpAndSettle();
+    await tester.enterText(mealField('Ingredient name'), 'Tomato');
+    await tester.enterText(mealField('Amount'), '100');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
     FocusManager.instance.primaryFocus?.unfocus();
     tester.testTextInput.hide();
     await tester.pumpAndSettle();
@@ -551,6 +595,10 @@ void main() {
     expect(store.meals.last['n'], 'Homemade soup');
     expect(store.meals.last['desc'], 'Tomato and lentil');
     expect(store.meals.last['k'], 240);
+    expect(store.meals.last['ingredients'], [
+      {'name': 'Tomato', 'amount': 100.0, 'unit': 'g'},
+    ]);
+    expect(store.meals.last['hasAiNutritionFallback'], false);
     expect(store.kcal(), 560);
   });
 

@@ -67,6 +67,23 @@ Finder _field(String label) => find.byWidgetPredicate(
 );
 
 void main() {
+  test('ingredient serialization retains its nutrition source', () {
+    expect(
+      const MealIngredient(
+        name: 'Rice',
+        amount: 150,
+        unit: 'g',
+        source: 'USDA FoodData Central',
+      ).toJson(),
+      {
+        'name': 'Rice',
+        'amount': 150,
+        'unit': 'g',
+        'source': 'USDA FoodData Central',
+      },
+    );
+  });
+
   testWidgets('estimates confirmed ingredients and preserves edited values', (
     tester,
   ) async {

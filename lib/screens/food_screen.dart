@@ -187,13 +187,31 @@ class FoodScreen extends StatelessWidget {
 
   Widget _mealCard(BuildContext context, Map meal, int index) {
     final description = meal['desc'] as String? ?? '';
+    final rawIngredients = meal['ingredients'];
+    final ingredients = rawIngredients is List
+        ? rawIngredients
+              .whereType<Map>()
+              .map((ingredient) {
+                final name = ingredient['name']?.toString().trim() ?? '';
+                final amount = ingredient['amount'];
+                final unit = ingredient['unit']?.toString() ?? 'g';
+                if (name.isEmpty || amount is! num) return null;
+                final formattedAmount = amount == amount.roundToDouble()
+                    ? amount.toStringAsFixed(0)
+                    : amount.toStringAsFixed(1);
+                return '$name $formattedAmount $unit';
+              })
+              .whereType<String>()
+              .toList()
+        : const <String>[];
     return card(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           mealPicture(
             context,
-            image: meal['img'] ?? mealImageAssetFor((meal['n'] ?? '').toString()),
+            image:
+                meal['img'] ?? mealImageAssetFor((meal['n'] ?? '').toString()),
             name: meal['n'],
             type: meal['t'],
             size: 42,
@@ -219,6 +237,19 @@ class FoodScreen extends StatelessWidget {
                 if (description.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(description, style: muted),
+                ],
+                if (ingredients.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Ingredients: ${ingredients.join(', ')}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: muted,
+                  ),
+                ],
+                if (meal['hasAiNutritionFallback'] == true) ...[
+                  const SizedBox(height: 4),
+                  const Text('Includes estimated nutrition', style: muted),
                 ],
                 const SizedBox(height: kGapSm),
                 Wrap(
@@ -247,7 +278,10 @@ class FoodScreen extends StatelessWidget {
 
   Widget _macroTag(BuildContext context, String label, dynamic value) =>
       Container(
-        padding: const EdgeInsets.symmetric(horizontal: kGapSm, vertical: kGapXs),
+        padding: const EdgeInsets.symmetric(
+          horizontal: kGapSm,
+          vertical: kGapXs,
+        ),
         decoration: BoxDecoration(
           color: tintOf(context),
           borderRadius: BorderRadius.circular(99),

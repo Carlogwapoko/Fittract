@@ -32,10 +32,11 @@ final class MealIngredient {
 
   String get promptText => '${name.trim()} · ${_formatAmount(amount)} $unit';
 
-  Map<String, Object> toJson() => {
+  Map<String, Object?> toJson() => {
     'name': name.trim(),
     'amount': amount,
     'unit': unit,
+    if (source != null) 'source': source,
   };
 }
 
