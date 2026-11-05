@@ -300,7 +300,7 @@ void main() {
     },
   );
 
-  testWidgets('Auth controls meet the new link, input, and signup states', (
+  testWidgets('Auth controls respect app theme and meet signup states', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -324,11 +324,11 @@ void main() {
     );
     expect(
       tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
-      ThemeMode.system,
+      ThemeMode.light,
     );
     expect(
       Theme.of(tester.element(find.byType(Scaffold).first)).brightness,
-      Brightness.dark,
+      Brightness.light,
     );
     expect(find.text('Continue with Google'), findsOneWidget);
     expect(find.text('or'), findsOneWidget);

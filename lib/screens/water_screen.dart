@@ -1,13 +1,12 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
-import '../widgets/log_activity_sheet.dart';
 import '../widgets/shared_widgets.dart';
 
 class WaterScreen extends StatelessWidget {
-  const WaterScreen({super.key});
+  const WaterScreen({super.key, this.embedded = false});
+
+  final bool embedded;
 
   String tf(int? ms) {
     if (ms == null) return '';
@@ -29,13 +28,11 @@ class WaterScreen extends StatelessWidget {
   Widget build(BuildContext context) => live((c) {
     final w = store.water();
     final waterGoalMl = store.waterGoalMl > 0 ? store.waterGoalMl : 2500;
-    final stepGoal = store.stepGoal > 0 ? store.stepGoal : 8000;
     final filledCells = ((w * 10) / waterGoalMl).clamp(0, 10).floor();
     final wl = store.d['water'] as List;
     final todays = wl.where((e) => e['d'] == today()).toList();
     final last = todays.isEmpty ? null : todays.last;
-    return screen([
-      hdr(c, 'Water & activity · Today', 'Every bit counts.', back: true),
+    final waterContent = <Widget>[
       card(
         color: kDk,
         pad: const EdgeInsets.all(16),
@@ -177,124 +174,27 @@ class WaterScreen extends StatelessWidget {
           ),
         ],
       ),
-      h3('Move a little more'),
-      card(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    ];
+
+    if (embedded) {
+      return SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(kGapLg),
           children: [
-            Text(
-              '${store.steps}',
-              style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800),
+            hdr(
+              c,
+              'Water · Today',
+              'Track your hydration.',
             ),
-            Text(
-              'of ${store.withThousands(stepGoal)} daily steps',
-              style: muted,
-            ),
-            bar(store.steps / stepGoal),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${store.actMin()} min active',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
-                Text('${store.actKc()} kcal burned', style: muted),
-              ],
-            ),
+            ...waterContent,
           ],
         ),
-      ),
-      for (final activity in List.of(store.acts))
-        card(
-          onTap: () async {
-            // Capture the activity itself, not a list index: the confirm
-            // dialog is async, and the list can change (e.g. the midnight
-            // rollover) while it is open. Remove only this exact entry, and
-            // only if it is still present.
-            if (await confirm(c, 'Remove this activity?', 'Remove')) {
-              final idx = store.acts.indexOf(activity);
-              if (idx < 0) {
-                if (c.mounted) {
-                  snack(c, 'That activity is no longer in the list.');
-                }
-                return;
-              }
-              final steps = activity['st'];
-              store.d['steps'] = max(
-                0,
-                store.steps - (steps is num ? steps.toInt() : 0),
-              );
-              store.acts.removeAt(idx);
-              store.save();
-            }
-          },
-          child: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: tintOf(c),
-                child: Icon(
-                  activityIconFor(activity['n']),
-                  color: primaryOf(c),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${activity['n']}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    Text(
-                      '${activity['t'] != null ? '${tf(activity['t'])} · ' : ''}${activity['min']} min · ${activity['km']} km',
-                      style: muted,
-                    ),
-                  ],
-                ),
-              ),
-              // The whole row's tap action is delete-with-confirmation, so
-              // the trailing glyph says exactly that instead of a chevron
-              // implying navigation. Confirmation stays on the row tap.
-              Icon(
-                Icons.delete_outline,
-                color: kRed,
-                semanticLabel: 'Remove activity',
-              ),
-            ],
-          ),
-        ),
-      btn('+ Log physical activity', () => showLogActivity(c)),
-      const SizedBox(height: kGapSm),
-      btn(
-        'Edit daily goals',
-        () async {
-          final f = await form(c, 'Daily goals', [
-            F('w', 'Water goal (ml)', '${store.waterGoalMl}', type: 'number'),
-            F('s', 'Step goal', '${store.stepGoal}', type: 'number'),
-          ], ok: 'Save');
-          if (f == null || !c.mounted) return;
-          final water = int.tryParse((f['w'] ?? '').trim());
-          final steps = int.tryParse((f['s'] ?? '').trim());
-          if (water == null || water < 500 || water > 10000) {
-            snack(c, 'Water goal must be between 500 and 10,000 ml.');
-            return;
-          }
-          if (steps == null || steps < 1000 || steps > 50000) {
-            snack(c, 'Step goal must be between 1,000 and 50,000.');
-            return;
-          }
-          store.activityGoals['waterMl'] = water;
-          store.activityGoals['steps'] = steps;
-          store.save();
-          snack(c, 'Daily goals saved.');
-        },
-        tonal: true,
-        icon: Icons.tune,
-      ),
+      );
+    }
+
+    return screen([
+      hdr(c, 'Water · Today', 'Every bit counts.', back: true),
+      ...waterContent,
     ]);
   });
 }

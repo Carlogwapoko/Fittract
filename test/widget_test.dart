@@ -17,6 +17,10 @@ Finder mealField(String label) => find.byWidgetPredicate(
       widget.decoration?.labelText?.startsWith(label) == true,
 );
 
+Finder balanceValue(String value) => find.byWidgetPredicate(
+  (widget) => widget is RichText && widget.text.toPlainText() == value,
+);
+
 void main() {
   test('New account data starts empty', () {
     final freshStore = Store()..d = Store().seed();
@@ -178,7 +182,7 @@ void main() {
     await tester.pumpWidget(const App());
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    expect(app.themeMode, ThemeMode.system);
+    expect(app.themeMode, ThemeMode.light);
 
     store.toggle('dark');
     await tester.pumpAndSettle();
@@ -363,7 +367,7 @@ void main() {
     store.save();
     await tester.pumpAndSettle();
     expect(find.text('Scheduled for 6:00 PM'), findsOneWidget);
-    expect(find.text('3 exercises'), findsOneWidget);
+    expect(find.textContaining('3 exercises · about'), findsOneWidget);
     expect(find.text('HIIT'), findsOneWidget);
 
     store.hist.add({
@@ -381,13 +385,14 @@ void main() {
     expect(find.text('Great work. 24 min · 3 of 4 exercises'), findsOneWidget);
     expect(find.text('🔥 270 kcal'), findsOneWidget);
     expect(find.text('8 sets'), findsOneWidget);
-    expect(find.text('This week · 1 / 3 workouts'), findsOneWidget);
+    expect(find.text('This week'), findsOneWidget);
+    expect(find.text('1 of 3 workouts'), findsOneWidget);
 
     await tester.tap(find.text('View summary'));
     expect(destinations.last, 3);
   });
 
-  testWidgets('Today water action logs without opening water details', (
+  testWidgets('Today balance cards omit their quick-action buttons', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -399,18 +404,222 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.byTooltip('Add a meal'), findsNothing);
+    expect(find.text('+250'), findsNothing);
+    expect(find.text('Start'), findsNothing);
+    expect(find.text('Log'), findsNothing);
+  });
+
+  testWidgets('Today balance cards show their empty states and titles', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tap a card to log or see details'), findsOneWidget);
+    expect(find.text('Meals'), findsOneWidget);
+    expect(balanceValue('0 kcal'), findsOneWidget);
+    expect(
+      find.text('Nothing logged yet. Add your first meal.'),
+      findsOneWidget,
+    );
+    expect(find.text('Water'), findsOneWidget);
+    expect(balanceValue('0.0 of 2.5 L'), findsOneWidget);
+    expect(find.text('Log your first glass.'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.text('＋ 250 ml'),
+      find.text('Daily steps'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('＋ 250 ml'));
+    expect(find.text('Daily steps'), findsOneWidget);
+    expect(balanceValue('0 steps'), findsOneWidget);
+    expect(find.text('of 8,000 steps today'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Weight'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Weight'), findsOneWidget);
+    expect(balanceValue('Not set'), findsOneWidget);
+    expect(
+      find.text('Add your weight to personalize your goals.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Today calorie, water, and step goals can be edited together', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
     await tester.pumpAndSettle();
 
-    expect(store.water(), 250);
-    expect(find.text('Water & activity · Today'), findsNothing);
-    expect(find.text('Added 250 ml of water'), findsOneWidget);
+    await tester.tap(find.text('Edit goals'));
+    await tester.pumpAndSettle();
+    expect(find.text('Set targets that work for your day.'), findsOneWidget);
+    expect(find.text('Step goal'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(0), '2300');
+    await tester.enterText(find.byType(TextField).at(1), '3000');
+    await tester.enterText(find.byType(TextField).at(2), '10000');
+    await tester.ensureVisible(find.text('Save changes'));
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    expect(store.nutritionGoals['calories'], 2300);
+    expect(store.waterGoalMl, 3000);
+    expect(store.stepGoal, 10000);
+    expect(balanceValue('0.0 of 3.0 L'), findsOneWidget);
+  });
+
+  testWidgets('Today balance cards show saved values and goal states', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['meals'] = [
+      {'d': today(), 'k': 2200},
+    ];
+    store.d['water'] = [
+      {'d': today(), 'ml': 2500},
+    ];
+    store.d['act'] = [
+      {'d': today(), 'n': 'Walk', 'min': 70, 'kc': 250},
+    ];
+    store.d['steps'] = 3200;
+    store.d['weights'] = [
+      [daysAgo(7), 72.6],
+      [today(), 72.4],
+    ];
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(balanceValue('2,200 kcal'), findsOneWidget);
+    expect(find.text('100 kcal over your goal'), findsOneWidget);
+    expect(balanceValue('2.5 of 2.5 L'), findsOneWidget);
+    expect(find.text('Goal reached. Nice work.'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Daily steps'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(balanceValue('3,200 steps'), findsOneWidget);
+    expect(find.text('of 8,000 steps today'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Weight'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(balanceValue('72.4 kg'), findsOneWidget);
+    expect(find.text('Down 0.2 kg this week'), findsOneWidget);
+    expect(find.text('Estimated'), findsNothing);
+  });
+
+  testWidgets('Today Add meal opens camera and gallery meal entry', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Meals'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Scan your food'), findsOneWidget);
+    expect(find.text('Choose from gallery'), findsOneWidget);
+  });
+
+  testWidgets('Today water card opens water details over the home screen', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Water'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Track your hydration.'), findsOneWidget);
+    expect(find.text('+ 250 ml'), findsOneWidget);
+    expect(find.text('Move a little more'), findsNothing);
+    expect(find.text('Your daily balance'), findsOneWidget);
+    expect(find.byTooltip('Close water details'), findsNothing);
+    expect(find.byIcon(Icons.close), findsNothing);
+  });
+
+  testWidgets('Today Daily steps card opens activity history and logging', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['steps'] = 1200;
+    store.acts.add({
+      'n': 'Brisk walk',
+      'min': 20,
+      'km': 1.5,
+      'st': 1200,
+      'kc': 90,
+      't': DateTime.now().millisecondsSinceEpoch,
+    });
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Daily steps'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Daily steps'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Your movement today.'), findsOneWidget);
+    expect(find.text('Today’s activity'), findsOneWidget);
+    expect(find.text('1,200'), findsOneWidget);
+    expect(find.text('Brisk walk'), findsOneWidget);
+    expect(find.textContaining('20 min · 1.5 km'), findsOneWidget);
+    expect(find.text('Log an activity'), findsOneWidget);
+    expect(find.text('Water · Today'), findsNothing);
+
+    await tester.tap(find.text('Log an activity'));
+    await tester.pumpAndSettle();
+    expect(find.text('Every bit of movement counts.'), findsOneWidget);
   });
 
   testWidgets('Weight tracker starts estimating weight and saves goals', (

@@ -465,9 +465,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
   );
 
   ThemeData _authTheme(BuildContext context) {
-    final dark =
-        store.on('dark') ||
-        MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    final dark = store.on('dark');
     final brightness = dark ? Brightness.dark : Brightness.light;
     final scheme = ColorScheme.fromSeed(seedColor: kPri, brightness: brightness)
         .copyWith(

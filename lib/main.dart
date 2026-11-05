@@ -99,7 +99,7 @@ class App extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: _AppThemes.light,
       darkTheme: _AppThemes.dark,
-      themeMode: store.on('dark') ? ThemeMode.dark : ThemeMode.system,
+      themeMode: store.on('dark') ? ThemeMode.dark : ThemeMode.light,
       home: store.hasActiveSession ? const Shell() : const AuthScreen(),
     ),
   );

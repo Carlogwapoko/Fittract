@@ -1,15 +1,17 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fittract/screens/exercise_library_screen.dart';
+import 'package:fittract/screens/activity_screen.dart';
 import 'package:fittract/screens/food_screen.dart';
 import 'package:fittract/screens/meal_picker_screen.dart';
 import 'package:fittract/screens/routines_tab.dart';
-import 'package:fittract/screens/water_screen.dart';
 import 'package:fittract/screens/workout_screen.dart';
+import 'package:fittract/services/activity_tracking_service.dart';
 import 'package:fittract/store/store.dart';
 import 'package:fittract/widgets/log_activity_sheet.dart';
 import 'package:fittract/widgets/shared_widgets.dart';
@@ -297,7 +299,6 @@ void main() {
       expect(activityIconFor('Cycling'), Icons.directions_bike);
       expect(activityIconFor('Swimming'), Icons.pool);
       expect(activityIconFor('Yoga'), Icons.self_improvement);
-      expect(activityIconFor('Gym'), Icons.fitness_center);
       expect(
         activityIconFor('Underwater basket weaving'),
         Icons.fitness_center,
@@ -305,7 +306,183 @@ void main() {
       expect(activityIconFor(null), Icons.fitness_center);
     });
 
-    testWidgets('water rows show the recorded activity type and delete glyph', (
+    testWidgets('activity picker omits Gym in favor of workout routines', (
+      tester,
+    ) async {
+      await freshStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showLogActivity(context),
+                child: const Text('Open activity picker'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open activity picker'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Gym'), findsNothing);
+      expect(find.text('Yoga'), findsOneWidget);
+      expect(find.text('Running'), findsOneWidget);
+    });
+
+    testWidgets('activity sheet keeps manual logging as an alternate flow', (
+      tester,
+    ) async {
+      await freshStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showLogActivity(context),
+                child: const Text('Open activity picker'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open activity picker'));
+      await tester.pumpAndSettle();
+      expect(find.text('Duration'), findsNothing);
+      expect(find.text('Add manually instead'), findsOneWidget);
+      expect(find.text('kcal'), findsNothing);
+      expect(find.text('--'), findsNWidgets(3));
+
+      await tester.tap(find.text('Add manually instead'));
+      await tester.pumpAndSettle();
+      expect(find.text('Duration'), findsOneWidget);
+      expect(find.text('15 min'), findsOneWidget);
+      expect(find.text('Distance (km)'), findsOneWidget);
+      expect(find.text('Save activity'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Save activity'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save activity'));
+      await tester.pumpAndSettle();
+      expect(store.acts, hasLength(1));
+      expect(store.acts.single['n'], 'Brisk walk');
+      expect(store.acts.single['min'], 30);
+      expect(store.acts.single['t'], isA<num>());
+    });
+
+    testWidgets('tracked activity stops, accepts distance, and saves', (
+      tester,
+    ) async {
+      await freshStore();
+      store.d['weights'] = [
+        [today(), 70.0],
+      ];
+      store.d['h'] = 170;
+      const locationChannel = MethodChannel('flutter.baseflow.com/geolocator');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(locationChannel, (call) async {
+            if (call.method == 'isLocationServiceEnabled') return false;
+            return 0;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(locationChannel, null),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showLogActivity(context),
+                child: const Text('Open activity picker'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open activity picker'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Start'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Stop'), findsOneWidget);
+      expect(find.text('GPS off, distance will be estimated'), findsOneWidget);
+      expect(find.text('Distance (km)'), findsNothing);
+      expect(find.text('Running'), findsOneWidget);
+
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(seconds: 2)),
+      );
+      await tester.pump();
+      expect(activityTracking.elapsedSeconds, greaterThanOrEqualTo(1));
+      await tester.ensureVisible(find.text('Stop'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+      expect(find.text('Save activity'), findsOneWidget);
+      expect(find.text('Distance (km)'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, '0.1');
+      await tester.pump();
+      expect(find.text('142'), findsOneWidget);
+
+      await tester.tap(find.text('Save activity'));
+      await tester.pumpAndSettle();
+
+      final saved = store.acts.single;
+      expect(saved['n'], 'Brisk walk');
+      expect(saved['t'], isA<num>());
+      expect(saved['durationSec'], greaterThanOrEqualTo(1));
+      expect(saved['km'], 0.1);
+      expect(saved['st'], 142);
+      expect(
+        saved['kc'],
+        (4.3 * 70 * (saved['durationSec'] as int) / 3600).round(),
+      );
+      expect(store.steps, 142);
+      expect(store.d['activeActivity'], isNull);
+      expect(activityTracking.hasSession, isFalse);
+    });
+
+    testWidgets('movement screen can reopen a running activity session', (
+      tester,
+    ) async {
+      await freshStore();
+      const locationChannel = MethodChannel('flutter.baseflow.com/geolocator');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(locationChannel, (call) async {
+            if (call.method == 'isLocationServiceEnabled') return false;
+            return 0;
+          });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(locationChannel, null);
+      });
+
+      await activityTracking.start('Brisk walk');
+      largeViewport(tester);
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: ActivityScreen())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tracking in progress'), findsOneWidget);
+      expect(find.text('Log an activity'), findsOneWidget);
+      await tester.tap(find.text('Tracking in progress'));
+      await tester.pumpAndSettle();
+      expect(find.text('Stop'), findsOneWidget);
+      expect(find.text('Brisk walk'), findsOneWidget);
+      activityTracking.discard();
+      await tester.pump();
+    });
+
+    testWidgets('activity history shows recorded type and delete glyph', (
       tester,
     ) async {
       largeViewport(tester);
@@ -331,7 +508,7 @@ void main() {
       store.save();
 
       await tester.pumpWidget(
-        const MaterialApp(home: Scaffold(body: WaterScreen())),
+        const MaterialApp(home: Scaffold(body: ActivityScreen())),
       );
       await tester.pumpAndSettle();
 
@@ -362,7 +539,7 @@ void main() {
         store.save();
 
         await tester.pumpWidget(
-          const MaterialApp(home: Scaffold(body: WaterScreen())),
+          const MaterialApp(home: Scaffold(body: ActivityScreen())),
         );
         await tester.pumpAndSettle();
 

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fittract/screens/food_screen.dart';
+import 'package:fittract/screens/activity_screen.dart';
 import 'package:fittract/screens/progress_tab.dart';
 import 'package:fittract/screens/profile_tab.dart';
 import 'package:fittract/screens/routines_tab.dart';
@@ -246,7 +247,7 @@ void main() {
         store.save();
 
         await tester.pumpWidget(
-          const MaterialApp(home: Scaffold(body: WaterScreen())),
+          const MaterialApp(home: Scaffold(body: ActivityScreen())),
         );
         await tester.pumpAndSettle();
 
@@ -301,7 +302,7 @@ void main() {
         store.save();
 
         await tester.pumpWidget(
-          const MaterialApp(home: Scaffold(body: WaterScreen())),
+          const MaterialApp(home: Scaffold(body: ActivityScreen())),
         );
         await tester.pumpAndSettle();
 
@@ -439,19 +440,18 @@ void main() {
       },
     );
 
-    testWidgets(
-      'Today still shows "Nothing scheduled" for a truly empty schedule',
-      (tester) async {
-        await freshStore();
-        await tester.pumpWidget(
-          const MaterialApp(
-            home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(find.text('Nothing scheduled'), findsOneWidget);
-      },
-    );
+    testWidgets('Today shows the redesigned empty workout state', (
+      tester,
+    ) async {
+      await freshStore();
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Nothing planned yet'), findsOneWidget);
+    });
 
     testWidgets(
       'Schedule entry for a deleted routine hides Start and explains',
@@ -596,6 +596,18 @@ void main() {
   });
 
   group('water custom amount and undo', () {
+    testWidgets('activity logging is not duplicated on the water screen', (
+      tester,
+    ) async {
+      await freshStore();
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: WaterScreen())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('+ Log physical activity'), findsNothing);
+    });
+
     testWidgets('invalid custom amount is rejected with a message', (
       tester,
     ) async {

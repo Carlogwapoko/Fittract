@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>FitTrack uses the camera to scan your meal and estimate its ingredients and nutrition.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>FitTrack uses your location to measure distance while you track an activity.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>FitTrack lets you choose a meal photo to scan its ingredients and nutrition.</string>
 	<key>UIApplicationSceneManifest</key>
