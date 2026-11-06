@@ -87,7 +87,9 @@ class WaterScreen extends StatelessWidget {
                       height: 30,
                       margin: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
-                        color: i < filledCells ? kMint : Colors.white12,
+                        color: i < filledCells
+                            ? const Color(0xFF1D6FB8)
+                            : Colors.white12,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Icon(
@@ -181,11 +183,7 @@ class WaterScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(kGapLg),
           children: [
-            hdr(
-              c,
-              'Water · Today',
-              'Track your hydration.',
-            ),
+            hdr(c, 'Water · Today', 'Track your hydration.'),
             ...waterContent,
           ],
         ),

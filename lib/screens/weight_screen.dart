@@ -20,6 +20,7 @@ class _WeightState extends State<WeightScreen> {
 
   int _range = 1;
   bool _dailyDetailsExpanded = false;
+  String? _expandedDetailDate;
   late final _startingWeight = TextEditingController();
   late final _manualWeight = TextEditingController();
   late final _targetWeight = TextEditingController(
@@ -92,6 +93,7 @@ class _WeightState extends State<WeightScreen> {
           todayDate: todayDate,
           visibleDays: visibleDays,
           change: change,
+          todayEntry: todayEntry,
           hasMealData: hasMealsToday,
           profileIsIncomplete: age == null || height == null,
         ),
@@ -157,6 +159,7 @@ class _WeightState extends State<WeightScreen> {
     required DateTime todayDate,
     required List<WeightEstimateDay> visibleDays,
     required double? change,
+    required WeightEstimateDay? todayEntry,
     required bool hasMealData,
     required bool profileIsIncomplete,
   }) {
@@ -173,9 +176,7 @@ class _WeightState extends State<WeightScreen> {
         ? const Color(0xFFE0F3E9)
         : const Color(0xFFFFF0D8);
     final dateText = DateFormat('EEE, MMM d').format(todayDate);
-    final dailyDetails = series.days.length > 7
-        ? series.days.sublist(series.days.length - 7).reversed.toList()
-        : series.days.reversed.toList();
+    final dailyDetails = visibleDays.reversed.toList();
     final chartLabel = _chartDescription(visibleDays);
 
     return card(
@@ -189,7 +190,9 @@ class _WeightState extends State<WeightScreen> {
             children: [
               Expanded(
                 child: Semantics(
-                  label: 'Estimated weight ${currentKg.toStringAsFixed(1)} kg',
+                  label: todayEntry?.manuallyWeighed == true
+                      ? 'Manually weighed ${currentKg.toStringAsFixed(1)} kg'
+                      : 'Estimated weight ${currentKg.toStringAsFixed(1)} kg',
                   child: Text(
                     hasCurrentWeight
                         ? '${currentKg.toStringAsFixed(1)} kg'
@@ -202,7 +205,11 @@ class _WeightState extends State<WeightScreen> {
                   ),
                 ),
               ),
-              tag('AI ESTIMATE'),
+              if (todayEntry != null &&
+                  todayEntry.complete &&
+                  !todayEntry.anchor &&
+                  !todayEntry.manuallyWeighed)
+                tag('AI ESTIMATE'),
             ],
           ),
           const SizedBox(height: kGapMd),
@@ -273,11 +280,14 @@ class _WeightState extends State<WeightScreen> {
             ),
           const SizedBox(height: kGapMd),
           if (!hasMealData)
-            const Padding(
-              padding: EdgeInsets.only(bottom: kGapMd),
+            Padding(
+              padding: const EdgeInsets.only(bottom: kGapMd),
               child: Text(
                 'Log your meals to improve your estimate',
-                style: TextStyle(color: kPri, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: primaryOf(context),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           if (profileIsIncomplete)
@@ -289,7 +299,7 @@ class _WeightState extends State<WeightScreen> {
               ),
             ),
           Text(
-            'Estimated from calories you eat minus calories you burn. About 7,700 kcal is roughly 1 kg. Water and carbs can shift daily weight, so treat this as a trend.',
+            'Estimated from calories you eat minus calories you burn. About 7,700 kcal is roughly 1 kg. Resting burn is used only for this estimate and is not counted as exercise.',
             style: muted.copyWith(fontSize: 12),
           ),
           const SizedBox(height: kGapSm),
@@ -309,28 +319,17 @@ class _WeightState extends State<WeightScreen> {
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
               children: [
-                for (final day in dailyDetails)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            DateFormat('EEE, MMM d').format(day.date),
-                          ),
-                        ),
-                        if (!day.complete && !day.anchor)
-                          Padding(
-                            padding: const EdgeInsets.only(right: kGapSm),
-                            child: Text('Incomplete', style: muted),
-                          ),
-                        Text(
-                          '${day.kg.toStringAsFixed(1)} kg',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ],
+                SizedBox(
+                  height: min(420.0, dailyDetails.length * 82.0),
+                  child: ListView.builder(
+                    itemCount: dailyDetails.length,
+                    itemBuilder: (context, index) => _dailyDetailRow(
+                      context,
+                      day: dailyDetails[index],
+                      allDays: series.days,
                     ),
                   ),
+                ),
               ],
             ),
           ),
@@ -338,6 +337,216 @@ class _WeightState extends State<WeightScreen> {
       ),
     );
   }
+
+  Widget _dailyDetailRow(
+    BuildContext context, {
+    required WeightEstimateDay day,
+    required List<WeightEstimateDay> allDays,
+  }) {
+    final isToday = day.dateKey == today();
+    final isExpanded = _expandedDetailDate == day.dateKey;
+    final dayIndex = allDays.indexWhere(
+      (entry) => entry.dateKey == day.dateKey,
+    );
+    final previous = dayIndex > 0 ? allDays[dayIndex - 1] : null;
+    final dailyChange = previous == null ? null : day.kg - previous.kg;
+    final colors = Theme.of(context).colorScheme;
+    final todayColor = tintOf(context);
+    final teal = primaryOf(context);
+    const amber = Color(0xFFB36A00);
+
+    return Column(
+      children: [
+        Material(
+          color: isToday ? todayColor : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: isToday
+                ? null
+                : () => setState(
+                    () => _expandedDetailDate = isExpanded ? null : day.dateKey,
+                  ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          DateFormat('EEE, MMM d').format(day.date),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        if (isToday)
+                          Text(
+                            'TODAY',
+                            style: TextStyle(
+                              color: teal,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: .5,
+                            ),
+                          )
+                        else if (isExpanded)
+                          Text('Tap to collapse', style: muted),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: _dailyValue(
+                      day.caloriesConsumed == null
+                          ? '--'
+                          : store.withThousands(day.caloriesConsumed!),
+                      'consumed',
+                      teal,
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: _dailyValue(
+                      store.withThousands(day.caloriesBurned),
+                      'burned',
+                      amber,
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${day.kg.toStringAsFixed(1)} kg',
+                          maxLines: 1,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          dailyChange == null
+                              ? (day.manuallyWeighed
+                                    ? 'weighed in'
+                                    : 'estimate')
+                              : '${dailyChange >= 0 ? '+' : ''}${dailyChange.toStringAsFixed(2)} kg',
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: dailyChange == null
+                                ? colors.onSurfaceVariant
+                                : dailyChange < 0
+                                ? const Color(0xFF21845A)
+                                : amber,
+                            fontSize: 10,
+                          ),
+                        ),
+                        if (dailyChange != null)
+                          Text(
+                            !day.hasMeals && !day.manuallyWeighed
+                                ? 'carried over'
+                                : day.manuallyWeighed
+                                ? 'weighed in'
+                                : 'estimate',
+                            maxLines: 1,
+                            style: muted.copyWith(fontSize: 9),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (isExpanded) _dailyRecordDetails(day, teal, amber),
+      ],
+    );
+  }
+
+  Widget _dailyValue(String value, String label, Color color) => Column(
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      Text(
+        value,
+        maxLines: 1,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      Text(label, style: muted.copyWith(fontSize: 9)),
+      Text('kcal', style: muted.copyWith(fontSize: 9)),
+    ],
+  );
+
+  Widget _dailyRecordDetails(
+    WeightEstimateDay day,
+    Color teal,
+    Color amber,
+  ) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        Text(
+          'Meals',
+          style: TextStyle(color: teal, fontWeight: FontWeight.w700),
+        ),
+        if (day.meals.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 4),
+            child: Text('No meals logged.', style: muted),
+          )
+        else
+          for (final meal in day.meals)
+            _recordLine(
+              '${meal['n'] ?? meal['desc'] ?? 'Meal'}',
+              '${store.withThousands(_recordCalories(meal['k']))} kcal',
+            ),
+        const SizedBox(height: 8),
+        Text(
+          'Activities',
+          style: TextStyle(color: amber, fontWeight: FontWeight.w700),
+        ),
+        if (day.activities.isEmpty && day.workouts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 4),
+            child: Text('No activities logged.', style: muted),
+          )
+        else
+          for (final activity in day.activities)
+            _recordLine(
+              '${activity['n'] ?? 'Activity'} · ${activity['min'] ?? 0} min · ${activity['km'] ?? 0} km',
+              '${store.withThousands(_recordCalories(activity['kc']))} kcal',
+            ),
+        for (final workout in day.workouts)
+          _recordLine(
+            '${workout['n'] ?? 'Workout'} · ${workout['min'] ?? 0} min',
+            '${store.withThousands(_recordCalories(workout['kc']))} kcal',
+          ),
+      ],
+    ),
+  );
+
+  Widget _recordLine(String title, String calories) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      children: [
+        Expanded(child: Text(title, style: muted)),
+        Text(calories, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
+    ),
+  );
+
+  int _recordCalories(Object? value) =>
+      value is num && value.isFinite ? value.round().clamp(0, 1000000) : 0;
 
   String _chartDescription(List<WeightEstimateDay> days) {
     if (days.isEmpty) {

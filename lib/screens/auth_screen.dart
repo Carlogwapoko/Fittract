@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../store/store.dart';
 import '../services/google_auth_service.dart';
+import '../theme/app_palette.dart';
 import 'forgot_password_screen.dart';
 import '../widgets/shared_widgets.dart';
 
@@ -246,7 +247,6 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
     String label, {
     Widget? suffixIcon,
   }) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     const borderColor = Color(0xFF9DB5B1);
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
@@ -264,10 +264,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
       enabledBorder: border,
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: dark ? kMint : const Color(0xFF005A50),
-          width: 3,
-        ),
+        borderSide: BorderSide(color: primaryOf(context), width: 3),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
@@ -280,10 +277,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
     );
   }
 
-  Color _linkColor(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF8FE3D0)
-      : const Color(0xFF005A50);
+  Color _linkColor(BuildContext context) => primaryOf(context);
 
   ButtonStyle _linkStyle(BuildContext context) => ButtonStyle(
     foregroundColor: WidgetStatePropertyAll(_linkColor(context)),
@@ -464,333 +458,307 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
     ],
   );
 
-  ThemeData _authTheme(BuildContext context) {
-    final dark = store.on('dark');
-    final brightness = dark ? Brightness.dark : Brightness.light;
-    final scheme = ColorScheme.fromSeed(seedColor: kPri, brightness: brightness)
-        .copyWith(
-          primary: dark ? kMint : kPri,
-          onPrimary: dark ? kInk : Colors.white,
-          secondary: dark ? kMint : kDk,
-          surface: dark ? kSurfaceDark : Colors.white,
-          onSurface: dark ? const Color(0xFFE4EFEC) : kInk,
-          outlineVariant: dark ? kLineDark : kLn,
-        );
-    return Theme.of(context).copyWith(
-      brightness: brightness,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: dark ? kBgDark : kBg,
-    );
-  }
-
   @override
-  Widget build(BuildContext context) => Theme(
-    data: _authTheme(context),
-    child: Scaffold(
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) => SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: constraints.maxHeight - 32,
-              ),
-              child: IntrinsicHeight(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Container(
-                      height: 150,
-                      padding: const EdgeInsets.all(kGapXl),
-                      clipBehavior: Clip.antiAlias,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF2C5A5A), kDk],
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                '▲ FITTRACK',
-                                style: TextStyle(
-                                  color: kMint,
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: .6,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                reg
-                                    ? 'Build a routine.\nFind your rhythm.'
-                                    : 'Small steps.\nStronger you.',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 27,
-                                  fontWeight: FontWeight.w800,
-                                  height: 1.08,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Positioned(
-                            right: -14,
-                            bottom: -27,
-                            child: IgnorePointer(
-                              child: SvgPicture.asset(
-                                'assets/images/progress_rings.svg',
-                                width: 112,
-                                height: 112,
-                                semanticsLabel: 'Decorative progress rings',
-                              ),
-                            ),
-                          ),
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight - 32),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    height: 150,
+                    padding: const EdgeInsets.all(kGapXl),
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          appTokensOf(context).heroBackground,
+                          Theme.of(context).colorScheme.primary,
                         ],
                       ),
                     ),
-                    const SizedBox(height: kGapLg),
-                    Text(
-                      reg ? 'Create your account' : 'Welcome back',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: kGapSm),
-                    if (reg) ...[
-                      SizedBox(
-                        height: 56,
-                        child: TextField(
-                          controller: nm,
-                          textCapitalization: TextCapitalization.words,
-                          textAlignVertical: TextAlignVertical.center,
-                          decoration: _inputDecoration(context, 'Full name'),
-                        ),
-                      ),
-                      const SizedBox(height: kGapMd),
-                    ],
-                    SizedBox(
-                      height: 56,
-                      child: TextField(
-                        controller: em,
-                        keyboardType: TextInputType.emailAddress,
-                        autofillHints: const [AutofillHints.email],
-                        textAlignVertical: TextAlignVertical.center,
-                        decoration: _inputDecoration(context, 'Email address'),
-                      ),
-                    ),
-                    const SizedBox(height: kGapMd),
-                    SizedBox(
-                      height: 56,
-                      child: TextField(
-                        controller: pw,
-                        obscureText: _obscurePw,
-                        autofillHints: reg
-                            ? const [AutofillHints.newPassword]
-                            : const [AutofillHints.password],
-                        textAlignVertical: TextAlignVertical.center,
-                        onChanged: reg ? (_) => setState(() {}) : null,
-                        decoration: _inputDecoration(
-                          context,
-                          'Password',
-                          suffixIcon: _visibilityToggle(
-                            obscured: _obscurePw,
-                            onToggle: () =>
-                                setState(() => _obscurePw = !_obscurePw),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (reg) ...[
-                      const SizedBox(height: kGapSm),
-                      _passwordStrengthMeter(context),
-                      const SizedBox(height: kGapMd),
-                      _agreementRow(context),
-                    ] else ...[
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          style: _linkStyle(context),
-                          onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => ForgotPasswordScreen(
-                                initialEmail: em.text.trim(),
+                    child: Stack(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '▲ FITTRACK',
+                              style: TextStyle(
+                                color: appTokensOf(context).mintTint,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: .6,
                               ),
                             ),
-                          ),
-                          child: const Text('Forgot password?'),
-                        ),
-                      ),
-                    ],
-                    if (err.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Text(err, style: const TextStyle(color: kRed)),
-                      ),
-                    if (notice.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Text(
-                          notice,
-                          style: TextStyle(color: _linkColor(context)),
-                        ),
-                      ),
-                    const SizedBox(height: kGapSm),
-                    SizedBox(
-                      height: 52,
-                      child: FilledButton(
-                        onPressed: emailBusy || (reg && !agree) ? null : submit,
-                        style: ButtonStyle(
-                          backgroundColor: WidgetStateProperty.resolveWith(
-                            (states) => states.contains(WidgetState.disabled)
-                                ? const Color(0xFFB7C0BE)
-                                : Theme.of(context).colorScheme.primary,
-                          ),
-                          foregroundColor: WidgetStateProperty.resolveWith(
-                            (states) => states.contains(WidgetState.disabled)
-                                ? const Color(0xFF485552)
-                                : Theme.of(context).colorScheme.onPrimary,
-                          ),
-                          side: WidgetStateProperty.resolveWith(
-                            (states) => states.contains(WidgetState.focused)
-                                ? BorderSide(
-                                    color: _linkColor(context),
-                                    width: 3,
-                                  )
-                                : BorderSide.none,
-                          ),
-                          shape: WidgetStatePropertyAll(
-                            RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
+                            const Spacer(),
+                            Text(
+                              reg
+                                  ? 'Build a routine.\nFind your rhythm.'
+                                  : 'Small steps.\nStronger you.',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 27,
+                                fontWeight: FontWeight.w800,
+                                height: 1.08,
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                        child: emailBusy
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Text(reg ? 'Create account' : 'Log in'),
-                      ),
-                    ),
-                    const SizedBox(height: kGapMd),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Divider(
-                            color: Theme.of(context).colorScheme.outlineVariant,
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Text(
-                            'or',
-                            style: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
+                        Positioned(
+                          right: -14,
+                          bottom: -27,
+                          child: IgnorePointer(
+                            child: SvgPicture.asset(
+                              'assets/images/progress_rings.svg',
+                              width: 112,
+                              height: 112,
+                              semanticsLabel: 'Decorative progress rings',
                             ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Divider(
-                            color: Theme.of(context).colorScheme.outlineVariant,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: kGapMd),
+                  ),
+                  const SizedBox(height: kGapLg),
+                  Text(
+                    reg ? 'Create your account' : 'Welcome back',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: kGapSm),
+                  if (reg) ...[
                     SizedBox(
-                      height: 52,
-                      child: OutlinedButton(
-                        onPressed: googleBusy || (reg && !agree)
-                            ? null
-                            : signInWithGoogle,
-                        style: ButtonStyle(
-                          backgroundColor: const WidgetStatePropertyAll(
-                            Colors.white,
-                          ),
-                          foregroundColor: const WidgetStatePropertyAll(
-                            Color(0xFF202124),
-                          ),
-                          side: WidgetStateProperty.resolveWith(
-                            (states) => BorderSide(
-                              color: states.contains(WidgetState.focused)
-                                  ? const Color(0xFF005A50)
-                                  : const Color(0xFF9DB5B1),
-                              width: states.contains(WidgetState.focused)
-                                  ? 3
-                                  : 1.5,
-                            ),
-                          ),
-                          shape: WidgetStatePropertyAll(
-                            RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                        ),
-                        child: googleBusy
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  SvgPicture.asset(
-                                    'assets/images/google_g.svg',
-                                    width: 20,
-                                    height: 20,
-                                    semanticsLabel: 'Google',
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    reg
-                                        ? 'Sign up with Google'
-                                        : 'Continue with Google',
-                                    style: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                      height: 56,
+                      child: TextField(
+                        controller: nm,
+                        textCapitalization: TextCapitalization.words,
+                        textAlignVertical: TextAlignVertical.center,
+                        decoration: _inputDecoration(context, 'Full name'),
                       ),
                     ),
-                    const Spacer(),
-                    const SizedBox(height: kGapLg),
-                    _policyLinks(context),
-                    Center(
+                    const SizedBox(height: kGapMd),
+                  ],
+                  SizedBox(
+                    height: 56,
+                    child: TextField(
+                      controller: em,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [AutofillHints.email],
+                      textAlignVertical: TextAlignVertical.center,
+                      decoration: _inputDecoration(context, 'Email address'),
+                    ),
+                  ),
+                  const SizedBox(height: kGapMd),
+                  SizedBox(
+                    height: 56,
+                    child: TextField(
+                      controller: pw,
+                      obscureText: _obscurePw,
+                      autofillHints: reg
+                          ? const [AutofillHints.newPassword]
+                          : const [AutofillHints.password],
+                      textAlignVertical: TextAlignVertical.center,
+                      onChanged: reg ? (_) => setState(() {}) : null,
+                      decoration: _inputDecoration(
+                        context,
+                        'Password',
+                        suffixIcon: _visibilityToggle(
+                          obscured: _obscurePw,
+                          onToggle: () =>
+                              setState(() => _obscurePw = !_obscurePw),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (reg) ...[
+                    const SizedBox(height: kGapSm),
+                    _passwordStrengthMeter(context),
+                    const SizedBox(height: kGapMd),
+                    _agreementRow(context),
+                  ] else ...[
+                    Align(
+                      alignment: Alignment.centerRight,
                       child: TextButton(
                         style: _linkStyle(context),
-                        onPressed: () => setState(() {
-                          reg = !reg;
-                          agree = false;
-                          err = '';
-                          notice = '';
-                        }),
-                        child: Text(
-                          reg
-                              ? 'Already a member? Log in'
-                              : 'New here? Create an account',
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ForgotPasswordScreen(
+                              initialEmail: em.text.trim(),
+                            ),
+                          ),
                         ),
+                        child: const Text('Forgot password?'),
                       ),
                     ),
                   ],
-                ),
+                  if (err.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Text(err, style: const TextStyle(color: kRed)),
+                    ),
+                  if (notice.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Text(
+                        notice,
+                        style: TextStyle(color: _linkColor(context)),
+                      ),
+                    ),
+                  const SizedBox(height: kGapSm),
+                  SizedBox(
+                    height: 52,
+                    child: FilledButton(
+                      onPressed: emailBusy || (reg && !agree) ? null : submit,
+                      style: ButtonStyle(
+                        backgroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.disabled)
+                              ? const Color(0xFFB7C0BE)
+                              : Theme.of(context).colorScheme.primary,
+                        ),
+                        foregroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.disabled)
+                              ? const Color(0xFF485552)
+                              : Theme.of(context).colorScheme.onPrimary,
+                        ),
+                        side: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.focused)
+                              ? BorderSide(color: _linkColor(context), width: 3)
+                              : BorderSide.none,
+                        ),
+                        shape: WidgetStatePropertyAll(
+                          RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                      child: emailBusy
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(reg ? 'Create account' : 'Log in'),
+                    ),
+                  ),
+                  const SizedBox(height: kGapMd),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Divider(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          'or',
+                          style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Divider(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: kGapMd),
+                  SizedBox(
+                    height: 52,
+                    child: OutlinedButton(
+                      onPressed: googleBusy || (reg && !agree)
+                          ? null
+                          : signInWithGoogle,
+                      style: ButtonStyle(
+                        backgroundColor: const WidgetStatePropertyAll(
+                          Colors.white,
+                        ),
+                        foregroundColor: const WidgetStatePropertyAll(
+                          Color(0xFF202124),
+                        ),
+                        side: WidgetStateProperty.resolveWith(
+                          (states) => BorderSide(
+                            color: states.contains(WidgetState.focused)
+                                ? primaryOf(context)
+                                : const Color(0xFF9DB5B1),
+                            width: states.contains(WidgetState.focused)
+                                ? 3
+                                : 1.5,
+                          ),
+                        ),
+                        shape: WidgetStatePropertyAll(
+                          RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                      child: googleBusy
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SvgPicture.asset(
+                                  'assets/images/google_g.svg',
+                                  width: 20,
+                                  height: 20,
+                                  semanticsLabel: 'Google',
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  reg
+                                      ? 'Sign up with Google'
+                                      : 'Continue with Google',
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                  const Spacer(),
+                  const SizedBox(height: kGapLg),
+                  _policyLinks(context),
+                  Center(
+                    child: TextButton(
+                      style: _linkStyle(context),
+                      onPressed: () => setState(() {
+                        reg = !reg;
+                        agree = false;
+                        err = '';
+                        notice = '';
+                      }),
+                      child: Text(
+                        reg
+                            ? 'Already a member? Log in'
+                            : 'New here? Create an account',
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

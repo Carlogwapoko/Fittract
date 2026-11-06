@@ -3,7 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../services/google_auth_service.dart';
+import '../services/theme_controller.dart';
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
 
 /// User-facing message for a password-change outcome. Verification failures
@@ -94,6 +96,16 @@ class ProfileTab extends StatelessWidget {
     store.save();
   }
 
+  Future<void> _chooseColorPalette(BuildContext context) async {
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => const _ColorPaletteSheet(),
+    );
+    if (applied != true) themeController.cancelPalettePreview();
+  }
+
   Widget sw(BuildContext context, String k, String title, String sub) =>
       ListTile(
         contentPadding: EdgeInsets.zero,
@@ -102,7 +114,9 @@ class ProfileTab extends StatelessWidget {
         trailing: Switch(
           value: store.on(k),
           activeTrackColor: primaryOf(context),
-          onChanged: (_) => store.toggle(k),
+          onChanged: (value) => k == 'dark'
+              ? themeController.setDarkMode(value)
+              : store.toggle(k),
         ),
       );
 
@@ -269,6 +283,41 @@ class ProfileTab extends StatelessWidget {
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
+              title: const Text('Color palette'),
+              subtitle: Text(
+                '${themeController.selectedPalette.name}'
+                '${themeController.selectedPalette.id == AppPalette.teal.id ? ' (default)' : ''}',
+                style: muted,
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final color in [
+                    themeController.selectedPalette.primary,
+                    themeController.selectedPalette.lightTint,
+                    themeController.selectedPalette.hero,
+                    themeController.selectedPalette.softBackground,
+                  ])
+                    Container(
+                      width: 14,
+                      height: 14,
+                      margin: const EdgeInsets.only(left: 3),
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Theme.of(c).colorScheme.outlineVariant,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+              onTap: () => _chooseColorPalette(c),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
               title: const Text('Units'),
               subtitle: Text(
                 store.on('lb') ? 'Imperial · lb' : 'Metric · kg, km, ml',
@@ -367,6 +416,7 @@ class ProfileTab extends StatelessWidget {
             remoteWarning = googleAuthErrorMessage(error);
           }
         }
+
         if (remoteWarning != null && remoteWarning.isNotEmpty && c.mounted) {
           snack(c, '$remoteWarning You are signed out on this device.');
         }
@@ -374,6 +424,153 @@ class ProfileTab extends StatelessWidget {
       }, tonal: true),
     ]);
   });
+}
+
+class _ColorPaletteSheet extends StatefulWidget {
+  const _ColorPaletteSheet();
+
+  @override
+  State<_ColorPaletteSheet> createState() => _ColorPaletteSheetState();
+}
+
+class _ColorPaletteSheetState extends State<_ColorPaletteSheet> {
+  late String _selectedId = themeController.selectedPaletteId;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        0,
+        20,
+        MediaQuery.viewInsetsOf(context).bottom + 20,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Choose your palette',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: kGapLg),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cardWidth = (constraints.maxWidth - kGapMd) / 2;
+                return Wrap(
+                  spacing: kGapMd,
+                  runSpacing: kGapMd,
+                  children: [
+                    for (final palette in AppPalette.all)
+                      SizedBox(
+                        width: cardWidth,
+                        child: _paletteCard(context, palette),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: kGapMd),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () {
+                    themeController.resetToDefault();
+                    setState(() => _selectedId = AppPalette.teal.id);
+                  },
+                  child: const Text('Reset to default'),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: kGapSm),
+                FilledButton(
+                  onPressed: () {
+                    themeController.applyPalette(_selectedId);
+                    Navigator.pop(context, true);
+                  },
+                  child: const Text('Apply'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _paletteCard(BuildContext context, AppPalette palette) {
+    final selected = _selectedId == palette.id;
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${palette.name} palette${selected ? ', selected' : ''}',
+      child: Material(
+        color: selected
+            ? colors.primary.withValues(alpha: .08)
+            : colors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: selected ? colors.primary : colors.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            setState(() => _selectedId = palette.id);
+            themeController.previewPalette(palette.id);
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(kGapMd),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        palette.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (selected)
+                      Icon(Icons.check_circle, color: colors.primary, size: 20),
+                  ],
+                ),
+                const SizedBox(height: kGapMd),
+                Row(
+                  children: [
+                    for (final color in [
+                      palette.primary,
+                      palette.lightTint,
+                      palette.hero,
+                    ])
+                      Expanded(
+                        child: Container(
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: color,
+                            border: Border.all(color: colors.outlineVariant),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _PersonalDetailsSheet extends StatefulWidget {

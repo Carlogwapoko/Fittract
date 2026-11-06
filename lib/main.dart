@@ -5,6 +5,8 @@ import 'firebase_options.dart';
 import 'store/store.dart';
 import 'screens/auth_screen.dart';
 import 'screens/shell_screen.dart';
+import 'services/theme_controller.dart';
+import 'theme/app_palette.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,30 +20,63 @@ void main() async {
     // Keep going without cloud auth/sync.
   }
   await store.init();
+  themeController.loadFromStore();
   runApp(const App());
 }
 
-ThemeData buildTheme(Brightness brightness) {
+ThemeData buildTheme(Brightness brightness, AppPalette palette) {
   final dark = brightness == Brightness.dark;
-  final primary = dark ? kMint : kPri;
-  final scheme = ColorScheme.fromSeed(seedColor: kPri, brightness: brightness)
-      .copyWith(
+  final primary = dark ? palette.lightTint : palette.primary;
+  final heroBackground = dark
+      ? Color.alphaBlend(
+          palette.hero.withValues(alpha: .45),
+          const Color(0xFF101A18),
+        )
+      : palette.hero;
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: palette.primary,
+        brightness: brightness,
+      ).copyWith(
         primary: primary,
-        onPrimary: dark ? kInk : Colors.white,
-        secondary: dark ? kMint : kDk,
-        surface: dark ? kSurfaceDark : Colors.white,
-        onSurface: dark ? const Color(0xFFE4EFEC) : kInk,
-        outlineVariant: dark ? kLineDark : kLn,
+        onPrimary: contrastingOn(primary),
+        secondary: dark ? palette.lightTint : palette.hero,
+        onSecondary: contrastingOn(dark ? palette.lightTint : palette.hero),
+        surface: dark ? const Color(0xFF162321) : Colors.white,
+        onSurface: dark ? const Color(0xFFE8F0EE) : palette.text,
+        outlineVariant: dark
+            ? const Color(0xFF354844)
+            : palette.primary.withValues(alpha: .18),
       );
-  final outline = dark ? kLineDark : kLn;
+  final outline = scheme.outlineVariant;
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: dark ? kBgDark : kBg,
+    scaffoldBackgroundColor: dark
+        ? const Color(0xFF101A18)
+        : palette.softBackground,
     fontFamily: 'Roboto',
+    extensions: [
+      AppThemeTokens(
+        heroBackground: heroBackground,
+        heroForeground: contrastingOn(heroBackground),
+        heroActionBackground: dark ? palette.primary : palette.accentTint,
+        heroActionForeground: contrastingOn(
+          dark ? palette.primary : palette.accentTint,
+        ),
+        mintTint: palette.accentTint,
+        softTint: palette.lightTint,
+        softBackground: dark ? const Color(0xFF101A18) : palette.softBackground,
+      ),
+    ],
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
-      indicatorColor: dark ? const Color(0xFF294A43) : kLt,
+      indicatorColor: dark
+          ? Color.alphaBlend(
+              palette.primary.withValues(alpha: .22),
+              scheme.surface,
+            )
+          : palette.lightTint,
       labelTextStyle: WidgetStateProperty.resolveWith(
         (states) => TextStyle(
           color: states.contains(WidgetState.selected)
@@ -54,9 +89,7 @@ ThemeData buildTheme(Brightness brightness) {
         ),
       ),
     ),
-    focusColor: dark
-        ? kMint.withValues(alpha: .28)
-        : kPri.withValues(alpha: .16),
+    focusColor: primary.withValues(alpha: dark ? .28 : .16),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
@@ -81,25 +114,18 @@ ThemeData buildTheme(Brightness brightness) {
   );
 }
 
-/// Built once: [buildTheme] (ColorScheme.fromSeed in particular) is too
-/// expensive to run on every [Store] notify, and the App-level listenable
-/// fires on every save.
-class _AppThemes {
-  static final ThemeData light = buildTheme(Brightness.light);
-  static final ThemeData dark = buildTheme(Brightness.dark);
-}
-
 class App extends StatelessWidget {
   const App({super.key});
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: store,
+    listenable: Listenable.merge([store, themeController]),
     builder: (_, _) => MaterialApp(
       title: 'FITTRACK',
       debugShowCheckedModeBanner: false,
-      theme: _AppThemes.light,
-      darkTheme: _AppThemes.dark,
-      themeMode: store.on('dark') ? ThemeMode.dark : ThemeMode.light,
+      theme: buildTheme(Brightness.light, themeController.selectedPalette),
+      darkTheme: buildTheme(Brightness.dark, themeController.selectedPalette),
+      themeMode: themeController.darkMode ? ThemeMode.dark : ThemeMode.light,
+      themeAnimationDuration: const Duration(milliseconds: 220),
       home: store.hasActiveSession ? const Shell() : const AuthScreen(),
     ),
   );

@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import 'shared_widgets.dart';
-
-const _todayTeal = Color(0xFF0B6B60);
-const _todayMint = Color(0xFFA6E9D7);
-const _todayDarkGreen = Color(0xFF1B4943);
 
 class StreakChip extends StatelessWidget {
   final int days;
@@ -92,7 +89,7 @@ class _RoundActionButtonState extends State<RoundActionButton> {
       borderRadius: BorderRadius.circular(widget.circular ? 99 : 99),
       side: BorderSide(
         color: _hovered
-            ? _todayTeal
+            ? primaryOf(context)
             : (widget.borderColor ?? Colors.transparent),
         width: _hovered || widget.borderColor != null ? 1.2 : 0,
       ),
@@ -122,7 +119,7 @@ class _RoundActionButtonState extends State<RoundActionButton> {
               color: widget.backgroundColor,
               shape: shape,
               elevation: _hovered ? 4 : 0,
-              shadowColor: _todayTeal.withValues(alpha: .24),
+              shadowColor: primaryOf(context).withValues(alpha: .24),
               child: InkWell(
                 customBorder: shape,
                 splashFactory: NoSplash.splashFactory,
@@ -226,12 +223,11 @@ class _ProgressRingCardState extends State<ProgressRingCard> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final radius = BorderRadius.circular(20);
-    final iconColor =
-        widget.accentColor ?? (isDark(context) ? _todayMint : _todayTeal);
+    final iconColor = widget.accentColor ?? primaryOf(context);
     final border = RoundedRectangleBorder(
       borderRadius: radius,
       side: BorderSide(
-        color: _hovered ? _todayTeal : colors.outlineVariant,
+        color: _hovered ? primaryOf(context) : colors.outlineVariant,
         width: _hovered ? 1.2 : 1,
       ),
     );
@@ -358,15 +354,13 @@ class _ProgressRingCardState extends State<ProgressRingCard> {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: isDark(context)
-                              ? const Color(0xFF1D3934)
-                              : const Color(0xFFD7F1E9),
+                          color: tintOf(context),
                           borderRadius: BorderRadius.circular(99),
                         ),
                         child: Text(
                           'Estimated',
                           style: TextStyle(
-                            color: isDark(context) ? _todayMint : _todayTeal,
+                            color: primaryOf(context),
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                           ),
@@ -426,10 +420,11 @@ class TodayWorkoutCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = isDark(context);
-    final background = dark ? const Color(0xFF163B36) : _todayDarkGreen;
+    final tokens = appTokensOf(context);
+    final background = tokens.heroBackground;
     final badgeColor = dark
         ? Colors.white.withValues(alpha: .1)
-        : const Color(0xFF315D56);
+        : tokens.heroForeground.withValues(alpha: .14);
     final completedCount = weeklyCount.clamp(0, weeklyGoal);
     final empty = title == null;
 
@@ -440,10 +435,12 @@ class TodayWorkoutCard extends StatelessWidget {
     }) => RoundActionButton(
       label: label,
       onPressed: onPressed,
-      foregroundColor: primary ? const Color(0xFF10302C) : Colors.white,
+      foregroundColor: primary
+          ? tokens.heroActionForeground
+          : tokens.heroForeground,
       borderColor: primary ? null : Colors.white.withValues(alpha: .5),
       backgroundColor: primary
-          ? _todayMint
+          ? tokens.heroActionBackground
           : Colors.white.withValues(alpha: .08),
       height: 48,
       width: double.infinity,
@@ -465,10 +462,10 @@ class TodayWorkoutCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             "TODAY'S WORKOUT",
             style: TextStyle(
-              color: _todayMint,
+              color: tokens.mintTint,
               fontSize: 11,
               letterSpacing: .9,
               fontWeight: FontWeight.w700,
@@ -477,8 +474,8 @@ class TodayWorkoutCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             title ?? 'Nothing planned yet',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: tokens.heroForeground,
               fontSize: 22,
               fontWeight: FontWeight.w800,
               height: 1.15,
@@ -487,7 +484,10 @@ class TodayWorkoutCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             detail ?? 'Choose a routine for today or schedule one for later.',
-            style: const TextStyle(color: Color(0xFFCFDCD8), fontSize: 13),
+            style: TextStyle(
+              color: tokens.heroForeground.withValues(alpha: .82),
+              fontSize: 13,
+            ),
           ),
           if (badges.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -507,8 +507,8 @@ class TodayWorkoutCard extends StatelessWidget {
                     ),
                     child: Text(
                       badge,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: tokens.heroForeground,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
@@ -533,13 +533,13 @@ class TodayWorkoutCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'This week',
-                style: TextStyle(color: Colors.white, fontSize: 12),
+                style: TextStyle(color: tokens.heroForeground, fontSize: 12),
               ),
               Text(
                 '$weeklyCount of $weeklyGoal workouts',
-                style: const TextStyle(color: Colors.white, fontSize: 12),
+                style: TextStyle(color: tokens.heroForeground, fontSize: 12),
               ),
             ],
           ),
@@ -553,8 +553,8 @@ class TodayWorkoutCard extends StatelessWidget {
                     height: 6,
                     decoration: BoxDecoration(
                       color: index < completedCount
-                          ? _todayMint
-                          : const Color(0xFF3D6A62),
+                          ? tokens.mintTint
+                          : tokens.heroForeground.withValues(alpha: .24),
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),

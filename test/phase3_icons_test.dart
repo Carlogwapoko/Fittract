@@ -306,7 +306,7 @@ void main() {
       expect(activityIconFor(null), Icons.fitness_center);
     });
 
-    testWidgets('activity picker omits Gym in favor of workout routines', (
+    testWidgets('activity picker only offers step-related activities', (
       tester,
     ) async {
       await freshStore();
@@ -326,8 +326,10 @@ void main() {
       await tester.tap(find.text('Open activity picker'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Gym'), findsNothing);
-      expect(find.text('Yoga'), findsOneWidget);
+      expect(find.text('Cycling'), findsNothing);
+      expect(find.text('Swimming'), findsNothing);
+      expect(find.text('Yoga'), findsNothing);
+      expect(find.text('Brisk walk'), findsOneWidget);
       expect(find.text('Running'), findsOneWidget);
     });
 

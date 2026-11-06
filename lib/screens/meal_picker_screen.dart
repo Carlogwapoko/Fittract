@@ -33,6 +33,7 @@ class _MealOption {
   );
 
   Map<String, dynamic> toMeal() => {
+    'd': today(),
     't': type,
     'n': name,
     'desc': description,
@@ -583,9 +584,13 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                 ),
                 card(
                   color: tintOf(context),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.edit_note_outlined, color: kPri, size: 28),
+                      Icon(
+                        Icons.edit_note_outlined,
+                        color: primaryOf(context),
+                        size: 28,
+                      ),
                       SizedBox(width: kGapMd),
                       Expanded(
                         child: Text(
@@ -1549,6 +1554,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     setState(() => _saving = true);
 
     store.meals.add({
+      'd': today(),
       't': _type,
       'n': name,
       'desc': _description.text.trim(),

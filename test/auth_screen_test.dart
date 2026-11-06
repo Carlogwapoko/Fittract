@@ -416,7 +416,8 @@ void main() {
       expect(store.hasActiveSession, isTrue);
       expect(store.d['user'], 'reg@example.com');
       expect(store.d['name'], 'Test User');
-      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Routines'), findsOneWidget);
       expect(
         find.text('Account created successfully. Please log in.'),
         findsNothing,

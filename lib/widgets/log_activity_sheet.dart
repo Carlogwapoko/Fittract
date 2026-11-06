@@ -25,16 +25,14 @@ class _Activity {
 const _activities = [
   _Activity('Brisk walk', Icons.directions_walk, 4, 110, .08),
   _Activity('Running', Icons.directions_run, 10, 160, .16),
-  _Activity('Cycling', Icons.directions_bike, 7, 0, .30),
-  _Activity('Swimming', Icons.pool, 8, 0, .03),
-  _Activity('Yoga', Icons.self_improvement, 3, 0, 0),
 ];
 
-/// Icon for a recorded activity, reusing the picker's canonical [_activities]
-/// mapping so a log row and the sheet that created it always agree. Unknown
-/// or legacy names get the neutral exercise default.
+/// Icons for removed activity types remain available for existing log rows.
 IconData activityIconFor(Object? name) {
   final wanted = (name ?? '').toString().trim().toLowerCase();
+  if (wanted == 'cycling') return Icons.directions_bike;
+  if (wanted == 'swimming') return Icons.pool;
+  if (wanted == 'yoga') return Icons.self_improvement;
   for (final activity in _activities) {
     if (activity.name.toLowerCase() == wanted) return activity.icon;
   }
@@ -414,6 +412,7 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
       }
     }
     store.acts.add({
+      'd': today(),
       'n': _activity.name,
       'min': _minutes,
       'km': double.parse(_km.toStringAsFixed(1)),

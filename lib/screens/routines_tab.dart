@@ -172,9 +172,7 @@ class _RoutinesState extends State<RoutinesTab> {
             width: 124,
             height: 124,
             decoration: BoxDecoration(
-              color: isDark(context)
-                  ? const Color(0xFF214840)
-                  : const Color(0xFF0A7F6F),
+              color: primaryOf(context),
               shape: BoxShape.circle,
             ),
             padding: const EdgeInsets.all(14),
@@ -200,7 +198,7 @@ class _RoutinesState extends State<RoutinesTab> {
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
                 backgroundColor: primaryOf(context),
-                foregroundColor: isDark(context) ? kInk : Colors.white,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
               ),
             ),
           ),

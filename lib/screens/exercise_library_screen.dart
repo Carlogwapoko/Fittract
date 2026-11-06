@@ -490,9 +490,7 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
         icon: const Icon(Icons.add, size: 19),
         label: const Text("Can't find it? Create a custom exercise"),
         style: TextButton.styleFrom(
-          foregroundColor: isDark(context)
-              ? const Color(0xFF8FE3D0)
-              : const Color(0xFF005A50),
+          foregroundColor: primaryOf(context),
           textStyle: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
@@ -510,9 +508,7 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
       padding: const EdgeInsets.only(bottom: kGapMd),
       child: Material(
         color: selected
-            ? (isDark(context)
-                  ? const Color(0xFF203D37)
-                  : const Color(0xFFE7F5F0))
+            ? tintOf(context)
             : Theme.of(context).colorScheme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
@@ -901,7 +897,7 @@ class _CustomExerciseSheetState extends State<_CustomExerciseSheet> {
       floatingLabelBehavior: FloatingLabelBehavior.auto,
       labelStyle: TextStyle(color: dark ? const Color(0xFFD2E1DD) : kDk),
       floatingLabelStyle: TextStyle(
-        color: dark ? kMint : const Color(0xFF005A50),
+        color: primaryOf(context),
         fontWeight: FontWeight.w700,
       ),
       border: OutlineInputBorder(
@@ -914,10 +910,7 @@ class _CustomExerciseSheetState extends State<_CustomExerciseSheet> {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(
-          color: dark ? kMint : const Color(0xFF005A50),
-          width: 3,
-        ),
+        borderSide: BorderSide(color: primaryOf(context), width: 3),
       ),
     );
   }

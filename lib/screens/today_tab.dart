@@ -131,7 +131,9 @@ class _TodayTabState extends State<TodayTab> {
         weightEstimate.hasAnchor &&
         !manualWeightToday &&
         currentWeightDay != null &&
-        !currentWeightDay.anchor;
+        !currentWeightDay.anchor &&
+        currentWeightDay.complete &&
+        !currentWeightDay.manuallyWeighed;
     final weeklyCount = store.wkCount(0);
     final weeklyGoal = store.weeklyWorkoutGoal;
 
@@ -158,10 +160,12 @@ class _TodayTabState extends State<TodayTab> {
     final rawExercises = routine?['ex'];
     final exercises = rawExercises is List ? rawExercises : const [];
 
-    final weightSubtitle = _weightSubtitle(weightEstimate, weightEntries);
+    final weightSubtitle = estimatedWeight
+        ? 'Estimated from calories consumed and burned'
+        : _weightSubtitle(weightEstimate, weightEntries);
     final unreadCount = newReminders ? reminders : 0;
     final dark = isDark(c);
-    final primary = dark ? const Color(0xFFA6E9D7) : const Color(0xFF0B6B60);
+    final primary = primaryOf(c);
     final caloriesOverGoal = caloriesEaten > calorieGoal;
     final waterGoalReached = waterMl >= waterGoalMl;
     final stepGoal = store.stepGoal;
@@ -205,9 +209,7 @@ class _TodayTabState extends State<TodayTab> {
 
     return SafeArea(
       child: ColoredBox(
-        color: dark
-            ? Theme.of(c).scaffoldBackgroundColor
-            : const Color(0xFFF2F6F5),
+        color: Theme.of(c).scaffoldBackgroundColor,
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 600),
@@ -363,6 +365,7 @@ class _TodayTabState extends State<TodayTab> {
                             : caloriesEaten > calorieGoal
                             ? '${store.withThousands(caloriesEaten - calorieGoal)} kcal over your goal'
                             : 'You reached your calorie goal.',
+                        progress: caloriesEaten / calorieGoal,
                         icon: Icons.restaurant,
                         backgroundColor: caloriesOverGoal
                             ? (dark
@@ -393,11 +396,12 @@ class _TodayTabState extends State<TodayTab> {
                         icon: Icons.water_drop,
                         accentColor: const Color(0xFF1D6FB8),
                         backgroundColor: waterGoalReached
-                            ? (dark
-                                  ? const Color(0xFF1D3934)
-                                  : const Color(0xFFE9F7F1))
+                            ? const Color(0xFF1D6FB8)
+                                  .withValues(alpha: dark ? .2 : .1)
                             : null,
-                        subtitleColor: waterGoalReached ? primary : null,
+                        subtitleColor: waterGoalReached
+                            ? const Color(0xFF1D6FB8)
+                            : null,
                         onTap: () => showWaterActivity(c),
                       ),
                     ),
@@ -535,10 +539,7 @@ class _DailyGoalsSheetState extends State<_DailyGoalsSheet> {
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 4),
-            const Text(
-              'Set targets that work for your day.',
-              style: muted,
-            ),
+            const Text('Set targets that work for your day.', style: muted),
             const SizedBox(height: kGapLg),
             _goalField(
               _calories,
@@ -547,12 +548,7 @@ class _DailyGoalsSheetState extends State<_DailyGoalsSheet> {
               Icons.restaurant_outlined,
             ),
             const SizedBox(height: kGapMd),
-            _goalField(
-              _water,
-              'Water goal',
-              'ml',
-              Icons.water_drop_outlined,
-            ),
+            _goalField(_water, 'Water goal', 'ml', Icons.water_drop_outlined),
             const SizedBox(height: kGapMd),
             _goalField(
               _steps,

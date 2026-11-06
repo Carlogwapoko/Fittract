@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/weight_estimator.dart';
+import '../theme/app_palette.dart';
 import 'password_hash_web_stub.dart'
     if (dart.library.js_interop) 'password_hash_web.dart'
     as web_hash;
@@ -34,10 +35,9 @@ const muted = TextStyle(color: kMut, fontSize: 12);
 bool isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
 
-Color primaryOf(BuildContext context) => isDark(context) ? kMint : kPri;
+Color primaryOf(BuildContext context) => Theme.of(context).colorScheme.primary;
 
-Color tintOf(BuildContext context) =>
-    isDark(context) ? const Color(0xFF1D3934) : kLt;
+Color tintOf(BuildContext context) => appTokensOf(context).softTint;
 
 // ───────────────────────── DATE HELPERS ─────────────────────────
 String isoOf(DateTime d) =>
@@ -779,6 +779,7 @@ class Store extends ChangeNotifier {
     'wtr': true,
     'mr': false,
     'dark': false,
+    'palette': AppPalette.teal.id,
     'goal': {'w': 0.0, 'd': '', 'wk': 3, 'sw': 0.0},
     'nutritionGoals': {
       'calories': 2100,

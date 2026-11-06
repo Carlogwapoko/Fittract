@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../services/session_wake_lock_stub.dart'
     if (dart.library.js_interop) '../services/session_wake_lock_web.dart';
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
 
 class WorkoutScreen extends StatefulWidget {
@@ -703,7 +704,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: kGapMd, vertical: kGapSm),
       decoration: BoxDecoration(
-        color: isDark(context) ? const Color(0xFF1D3934) : kDk,
+        color: appTokensOf(context).heroBackground,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -715,8 +716,8 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
               Expanded(
                 child: Text(
                   _clock(secs),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: appTokensOf(context).heroForeground,
                     fontSize: 32,
                     fontWeight: FontWeight.w800,
                     fontFeatures: [FontFeature.tabularFigures()],
@@ -729,8 +730,8 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                 child: IconButton(
                   tooltip: paused ? 'Resume' : 'Pause',
                   onPressed: _togglePause,
-                  color: Colors.white,
-                  focusColor: kMint.withValues(alpha: .25),
+                  color: appTokensOf(context).heroForeground,
+                  focusColor: primaryOf(context).withValues(alpha: .25),
                   icon: Icon(paused ? Icons.play_arrow : Icons.pause),
                 ),
               ),
@@ -742,7 +743,10 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                 : exs.isEmpty
                 ? 'No exercises'
                 : 'Exercise ${i + 1} of ${exs.length} · $nDone done',
-            style: const TextStyle(color: Colors.white, fontSize: 12),
+            style: TextStyle(
+              color: appTokensOf(context).heroForeground,
+              fontSize: 12,
+            ),
           ),
           const SizedBox(height: kGapSm),
           ClipRRect(
@@ -750,7 +754,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
             child: LinearProgressIndicator(
               value: progress,
               minHeight: 8,
-              color: const Color(0xFF8FF0D6),
+              color: appTokensOf(context).mintTint,
               backgroundColor: Colors.white24,
             ),
           ),
@@ -967,9 +971,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
   }) {
     final set = sets[exerciseIndex][setIndex];
     final checked = set['ok'] == true;
-    final background = checked
-        ? (isDark(context) ? const Color(0xFF203D37) : const Color(0xFFE7F5F0))
-        : Colors.transparent;
+    final background = checked ? tintOf(context) : Colors.transparent;
     return Container(
       margin: const EdgeInsets.only(bottom: kGapXs),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),

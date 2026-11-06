@@ -260,7 +260,12 @@ class ActivityTrackingService with WidgetsBindingObserver, ChangeNotifier {
     final steps = (name == 'Brisk walk' || name == 'Running')
         ? estimatedSteps(distanceMetersToSave)
         : 0;
+    final startedAt = _session!['startedAtMs'];
+    final activityDate = startedAt is num
+        ? DateTime.fromMillisecondsSinceEpoch(startedAt.toInt())
+        : DateTime.now();
     store.acts.add({
+      'd': isoOf(activityDate),
       'n': name,
       'min': seconds == 0 ? 0 : math.max(1, (seconds / 60).round()),
       'durationSec': seconds,

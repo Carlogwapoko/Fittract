@@ -110,9 +110,7 @@ class _TodayNavigationBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = isDark(context);
     final colors = Theme.of(context).colorScheme;
-    final selectedColor = dark
-        ? const Color(0xFFA6E9D7)
-        : const Color(0xFF0B6B60);
+    final selectedColor = colors.primary;
 
     return Container(
       decoration: BoxDecoration(
@@ -211,9 +209,7 @@ class _NavigationDestinationState extends State<_NavigationDestination> {
                     height: 30,
                     decoration: BoxDecoration(
                       color: widget.selected
-                          ? (isDark(context)
-                                ? const Color(0xFF294A43)
-                                : const Color(0xFFD7F1E9))
+                          ? tintOf(context)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(99),
                       boxShadow: _hovered

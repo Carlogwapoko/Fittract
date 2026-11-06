@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fittract/main.dart';
@@ -7,6 +8,8 @@ import 'package:fittract/screens/profile_tab.dart';
 import 'package:fittract/screens/today_tab.dart';
 import 'package:fittract/screens/weight_screen.dart';
 import 'package:fittract/store/store.dart';
+import 'package:fittract/services/theme_controller.dart';
+import 'package:fittract/theme/app_palette.dart';
 import 'package:fittract/widgets/shared_widgets.dart';
 
 void _ignoreTab(int _) {}
@@ -22,6 +25,36 @@ Finder balanceValue(String value) => find.byWidgetPredicate(
 );
 
 void main() {
+  test('all palette themes keep key foreground colors accessible', () {
+    for (final palette in AppPalette.all) {
+      for (final brightness in Brightness.values) {
+        final theme = buildTheme(brightness, palette);
+        final tokens = theme.extension<AppThemeTokens>()!;
+        expect(
+          hasAccessibleContrast(
+            theme.colorScheme.onPrimary,
+            theme.colorScheme.primary,
+          ),
+          isTrue,
+          reason: '${palette.name} $brightness primary',
+        );
+        expect(
+          hasAccessibleContrast(tokens.heroForeground, tokens.heroBackground),
+          isTrue,
+          reason: '${palette.name} $brightness hero',
+        );
+        expect(
+          hasAccessibleContrast(
+            tokens.heroActionForeground,
+            tokens.heroActionBackground,
+          ),
+          isTrue,
+          reason: '${palette.name} $brightness hero action',
+        );
+      }
+    }
+  });
+
   test('New account data starts empty', () {
     final freshStore = Store()..d = Store().seed();
 
@@ -222,6 +255,46 @@ void main() {
 
     expect(store.lastW(), 70.5);
     expect(store.d['weights'].single[0], today());
+  });
+
+  testWidgets('Profile palette picker previews and applies a palette', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+
+    await tester.pumpWidget(
+      ListenableBuilder(
+        listenable: Listenable.merge([store, themeController]),
+        builder: (_, _) => MaterialApp(
+          theme: buildTheme(Brightness.light, themeController.selectedPalette),
+          home: const Scaffold(body: ProfileTab()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final paletteRow = find.text('Color palette');
+    await tester.scrollUntilVisible(
+      paletteRow,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(paletteRow);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ocean blue').last);
+    await tester.pumpAndSettle();
+    expect(themeController.selectedPaletteId, 'ocean');
+
+    await tester.tap(find.text('Apply'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ocean blue'), findsOneWidget);
+    expect(store.d['palette'], 'ocean');
+
+    themeController.resetToDefault();
+    themeController.applyPalette(AppPalette.teal.id);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('Profile camera icon can be pressed without opening anything', (
@@ -537,6 +610,183 @@ void main() {
     expect(find.text('Estimated'), findsNothing);
   });
 
+  testWidgets('Meals card progress ring reflects the calorie goal', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['meals'] = [
+      {'d': today(), 'k': 1050},
+    ];
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is CircularProgressIndicator && widget.value == 0.5,
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'Weight daily details separate calories and expand saved daily records',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await store.init();
+      store.d['weights'] = [
+        [daysAgo(2), 72.0],
+      ];
+      store.d['meals'] = [
+        {'d': today(), 'k': 1800},
+      ];
+      store.d['act'] = [
+        {'d': today(), 'kc': 250},
+      ];
+      store.d['log'] = [
+        {
+          'd': daysAgo(1),
+          'meals': [
+            {'n': 'Lunch', 'k': 600},
+          ],
+          'act': [
+            {'n': 'Walk', 'min': 20, 'km': 1.5, 'kc': 250},
+          ],
+          'steps': 0,
+        },
+      ];
+      store.d['hist'] = [
+        {'d': daysAgo(1), 'n': 'Strength workout', 'min': 30, 'kc': 400},
+      ];
+      store.d['age'] = 30;
+      store.d['h'] = 170;
+      store.d['sex'] = 'other';
+      store.d['activityLevel'] = 'sedentary';
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: WeightScreen())),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Daily details'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Daily details'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('TODAY'), findsOneWidget);
+      expect(find.text('1,800'), findsOneWidget);
+      expect(find.text('250'), findsOneWidget);
+      expect(find.text('650'), findsOneWidget);
+      expect(
+        find.text(
+          DateFormat('EEE, MMM d')
+              .format(DateTime.now().subtract(const Duration(days: 1))),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.text(
+          DateFormat('EEE, MMM d')
+              .format(DateTime.now().subtract(const Duration(days: 1))),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Lunch'), findsOneWidget);
+      expect(find.text('600 kcal'), findsOneWidget);
+      expect(find.text('Walk · 20 min · 1.5 km'), findsOneWidget);
+      expect(find.text('250 kcal'), findsOneWidget);
+      expect(find.text('Strength workout · 30 min'), findsOneWidget);
+      expect(find.text('400 kcal'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Today identifies automatically estimated weight', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['weights'] = [
+      [daysAgo(1), 72.0],
+    ];
+    store.d['meals'] = [
+      {'d': today(), 'k': 1800},
+    ];
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TodayTab(goTo: _ignoreTab)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final scrollable = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      find.text('Daily steps'),
+      200,
+      scrollable: scrollable,
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Weight'),
+      200,
+      scrollable: scrollable,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Estimated'), findsOneWidget);
+    expect(
+      find.text('Estimated from calories consumed and burned'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Manual weigh-in hides the AI estimate until recalculated', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['weights'] = [
+      [daysAgo(1), 72.0],
+    ];
+    store.d['meals'] = [
+      {'d': today(), 'k': 1800},
+    ];
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WeightScreen())),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('AI ESTIMATE'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Save weight'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.enterText(find.byType(TextField).first, '71.5');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save weight'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text(DateFormat('EEE, MMM d').format(DateTime.now())),
+      -200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI ESTIMATE'), findsNothing);
+    expect(find.text('71.5 kg'), findsOneWidget);
+  });
+
   testWidgets('Today Add meal opens camera and gallery meal entry', (
     WidgetTester tester,
   ) async {
@@ -654,7 +904,7 @@ void main() {
     );
     await tester.tap(find.text('Start tracking'));
     await tester.pumpAndSettle();
-    expect(find.text('AI ESTIMATE'), findsOneWidget);
+    expect(find.text('AI ESTIMATE'), findsNothing);
     expect(store.lastW(), 68.4);
     expect(
       find.text('Tracking started. Your estimate updates every day.'),

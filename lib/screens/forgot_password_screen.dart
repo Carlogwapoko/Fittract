@@ -102,7 +102,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           if (_notice.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: kGapMd),
-              child: Text(_notice, style: const TextStyle(color: kPri)),
+              child: Text(_notice, style: TextStyle(color: primaryOf(context))),
             ),
           const SizedBox(height: kGapLg),
           if (_busy)

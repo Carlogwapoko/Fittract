@@ -23,7 +23,7 @@ class _ProgressState extends State<ProgressTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: kMint, size: 18),
+          Icon(icon, color: primaryOf(context), size: 18),
           const SizedBox(height: kGapSm),
           Text(
             big,
@@ -113,8 +113,8 @@ class _ProgressState extends State<ProgressTab> {
                           Container(
                             margin: const EdgeInsets.symmetric(horizontal: 6),
                             height: max(8, v / top * 100),
-                            decoration: const BoxDecoration(
-                              color: kPri,
+                            decoration: BoxDecoration(
+                              color: primaryOf(context),
                               borderRadius: BorderRadius.vertical(
                                 top: Radius.circular(6),
                               ),
@@ -165,9 +165,9 @@ class _ProgressState extends State<ProgressTab> {
                 style: muted,
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 '✓ Completed',
-                style: TextStyle(color: kPri, fontSize: 12),
+                style: TextStyle(color: primaryOf(context), fontSize: 12),
               ),
             ],
           ),

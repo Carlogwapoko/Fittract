@@ -126,7 +126,7 @@ Widget bar(double p, {bool dark = false}) => Padding(
       child: LinearProgressIndicator(
         value: progressOf(p),
         minHeight: 6,
-        color: dark ? kMint : primaryOf(context),
+        color: primaryOf(context),
         backgroundColor: dark
             ? Colors.white24
             : (isDark(context) ? kLineDark : kLn),
