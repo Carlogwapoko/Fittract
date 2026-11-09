@@ -26,57 +26,91 @@ void main() async {
 
 ThemeData buildTheme(Brightness brightness, AppPalette palette) {
   final dark = brightness == Brightness.dark;
-  final primary = dark ? palette.lightTint : palette.primary;
-  final heroBackground = dark
-      ? Color.alphaBlend(
-          palette.hero.withValues(alpha: .45),
-          const Color(0xFF101A18),
-        )
-      : palette.hero;
-  final scheme =
-      ColorScheme.fromSeed(
-        seedColor: palette.primary,
-        brightness: brightness,
-      ).copyWith(
-        primary: primary,
-        onPrimary: contrastingOn(primary),
-        secondary: dark ? palette.lightTint : palette.hero,
-        onSecondary: contrastingOn(dark ? palette.lightTint : palette.hero),
-        surface: dark ? const Color(0xFF162321) : Colors.white,
-        onSurface: dark ? const Color(0xFFE8F0EE) : palette.text,
-        outlineVariant: dark
-            ? const Color(0xFF354844)
-            : palette.primary.withValues(alpha: .18),
-      );
-  final outline = scheme.outlineVariant;
+  final primary = dark ? palette.darkPrimary : palette.primary;
+  final onPrimary = dark ? palette.darkOnPrimary : contrastingOn(primary);
+  final background = dark ? palette.darkBackground : palette.softBackground;
+  final surface = dark ? palette.darkCard : Colors.white;
+  final onSurface = dark ? palette.darkText : palette.text;
+  final muted = dark ? palette.darkMutedText : palette.muted;
+  final outline = dark
+      ? palette.darkDivider
+      : palette.borderWidth > 1
+      ? palette.primary
+      : palette.primary.withValues(alpha: .24);
+  final heroBackground = dark ? palette.darkHero : palette.hero;
+  final heroForeground = dark ? palette.darkText : contrastingOn(palette.hero);
+  final tint = dark ? palette.darkTint : palette.lightTint;
+  final inputBorderWidth = palette.borderWidth < 1.5
+      ? 1.5
+      : palette.borderWidth;
+  final scheme = ColorScheme(
+    brightness: brightness,
+    primary: primary,
+    onPrimary: onPrimary,
+    secondary: dark ? palette.darkAccent : palette.hero,
+    onSecondary: dark
+        ? contrastingOn(palette.darkAccent)
+        : contrastingOn(palette.hero),
+    error: dark ? const Color(0xFFFF8A80) : const Color(0xFFC0392B),
+    onError: dark ? const Color(0xFF3B0909) : Colors.white,
+    surface: surface,
+    onSurface: onSurface,
+    surfaceContainerLowest: background,
+    surfaceContainerLow: surface,
+    surfaceContainer: surface,
+    surfaceContainerHigh: surface,
+    surfaceContainerHighest: surface,
+    onSurfaceVariant: muted,
+    outline: outline,
+    outlineVariant: outline,
+    shadow: Colors.black,
+    scrim: Colors.black,
+    inverseSurface: onSurface,
+    onInverseSurface: surface,
+    inversePrimary: dark ? palette.primary : palette.darkPrimary,
+    primaryContainer: tint,
+    onPrimaryContainer: onSurface,
+    secondaryContainer: tint,
+    onSecondaryContainer: onSurface,
+    tertiary: dark ? palette.darkAccent : palette.accentTint,
+    onTertiary: dark
+        ? contrastingOn(palette.darkAccent)
+        : contrastingOn(palette.accentTint),
+    tertiaryContainer: tint,
+    onTertiaryContainer: onSurface,
+  );
+  final heroActionBackground = dark ? palette.darkTint : palette.accentTint;
+  final heroActionForeground = dark
+      ? palette.darkText
+      : contrastingOn(heroActionBackground);
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
-    scaffoldBackgroundColor: dark
-        ? const Color(0xFF101A18)
-        : palette.softBackground,
+    scaffoldBackgroundColor: background,
     fontFamily: 'Roboto',
+    dividerColor: outline,
+    cardColor: surface,
     extensions: [
       AppThemeTokens(
         heroBackground: heroBackground,
-        heroForeground: contrastingOn(heroBackground),
-        heroActionBackground: dark ? palette.primary : palette.accentTint,
-        heroActionForeground: contrastingOn(
-          dark ? palette.primary : palette.accentTint,
-        ),
-        mintTint: palette.accentTint,
-        softTint: palette.lightTint,
-        softBackground: dark ? const Color(0xFF101A18) : palette.softBackground,
+        heroForeground: heroForeground,
+        heroActionBackground: heroActionBackground,
+        heroActionForeground: heroActionForeground,
+        mintTint: dark ? palette.darkAccent : palette.accentTint,
+        softTint: tint,
+        softBackground: background,
+        cardBackground: surface,
+        mutedText: muted,
+        divider: outline,
+        accent: dark ? palette.darkAccent : palette.accentTint,
+        water: dark ? const Color(0xFF4F9BE0) : const Color(0xFF1D6FB8),
+        activity: dark ? const Color(0xFFE08A2E) : const Color(0xFFB25E09),
+        borderWidth: palette.borderWidth,
       ),
     ],
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
-      indicatorColor: dark
-          ? Color.alphaBlend(
-              palette.primary.withValues(alpha: .22),
-              scheme.surface,
-            )
-          : palette.lightTint,
+      indicatorColor: dark ? palette.darkTint : palette.lightTint,
       labelTextStyle: WidgetStateProperty.resolveWith(
         (states) => TextStyle(
           color: states.contains(WidgetState.selected)
@@ -90,20 +124,23 @@ ThemeData buildTheme(Brightness brightness, AppPalette palette) {
       ),
     ),
     focusColor: primary.withValues(alpha: dark ? .28 : .16),
+    textTheme: ThemeData(brightness: brightness).textTheme
+        .apply(bodyColor: onSurface, displayColor: onSurface),
+    iconTheme: IconThemeData(color: onSurface),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surface,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: outline),
+        borderSide: BorderSide(color: outline, width: inputBorderWidth),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: outline),
+        borderSide: BorderSide(color: outline, width: inputBorderWidth),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: primary, width: 1.5),
+        borderSide: BorderSide(color: primary, width: inputBorderWidth),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     ),

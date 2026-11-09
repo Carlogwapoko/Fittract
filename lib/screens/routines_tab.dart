@@ -153,7 +153,7 @@ class _RoutinesState extends State<RoutinesTab> {
               onPressed: () => createRoutine(c),
               focusColor: primaryOf(c).withValues(alpha: .2),
               backgroundColor: primaryOf(c),
-              foregroundColor: isDark(c) ? kInk : Colors.white,
+              foregroundColor: Theme.of(c).colorScheme.onPrimary,
               icon: const Icon(Icons.add),
               label: const Text('Create routine'),
             ),
@@ -358,7 +358,7 @@ class _RoutinesState extends State<RoutinesTab> {
                   focusNode: null,
                   labelStyle: TextStyle(
                     color: filter == _exploreFilter
-                        ? (isDark(context) ? kInk : Colors.white)
+                        ? Theme.of(context).colorScheme.onPrimary
                         : Theme.of(context).colorScheme.onSurface,
                     fontWeight: FontWeight.w600,
                   ),
@@ -545,7 +545,7 @@ class _RoutineSegments extends StatelessWidget {
                     ? primaryOf(context)
                     : Theme.of(context).colorScheme.surface,
                 foregroundColor: selected == index
-                    ? (isDark(context) ? kInk : Colors.white)
+                    ? Theme.of(context).colorScheme.onPrimary
                     : Theme.of(context).colorScheme.onSurface,
                 side: BorderSide(
                   color: selected == index
@@ -659,7 +659,7 @@ class _EditState extends State<EditRoutine> {
             onPressed: () => Navigator.pop(dialogContext, true),
             style: FilledButton.styleFrom(
               backgroundColor: primaryOf(dialogContext),
-              foregroundColor: isDark(dialogContext) ? kInk : Colors.white,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onPrimary,
             ),
             child: const Text('Discard'),
           ),
@@ -849,13 +849,13 @@ class _EditState extends State<EditRoutine> {
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(52),
                   backgroundColor: primaryOf(context),
-                  foregroundColor: isDark(context) ? kInk : Colors.white,
-                  disabledBackgroundColor: isDark(context)
-                      ? const Color(0xFF293735)
-                      : const Color(0xFFD8E0DF),
-                  disabledForegroundColor: isDark(context)
-                      ? const Color(0xFFB7C3C0)
-                      : const Color(0xFF53615E),
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  disabledBackgroundColor: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest,
+                  disabledForegroundColor: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant,
                 ),
                 child: const Text('Save routine'),
               ),
@@ -1043,7 +1043,7 @@ class _EditState extends State<EditRoutine> {
                       selectedColor: primaryOf(context),
                       labelStyle: TextStyle(
                         color: rest == value
-                            ? (isDark(context) ? kInk : Colors.white)
+                            ? Theme.of(context).colorScheme.onPrimary
                             : Theme.of(context).colorScheme.onSurface,
                       ),
                       onSelected: (_) =>

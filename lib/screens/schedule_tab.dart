@@ -97,10 +97,11 @@ class _ScheduleState extends State<ScheduleTab> {
                       fontSize: 13,
                       fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
                       color: selected
-                          ? Colors.white
+                          ? Theme.of(context).colorScheme.onPrimary
                           : (inMonth
                                 ? Theme.of(context).colorScheme.onSurface
-                                : kMut.withValues(alpha: .5)),
+                                : Theme.of(context).colorScheme.onSurfaceVariant
+                                      .withValues(alpha: .7)),
                     ),
                   ),
                   has
@@ -109,7 +110,9 @@ class _ScheduleState extends State<ScheduleTab> {
                           height: 4,
                           margin: const EdgeInsets.only(top: 2),
                           decoration: BoxDecoration(
-                            color: selected ? Colors.white : primaryOf(context),
+                            color: selected
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : primaryOf(context),
                             shape: BoxShape.circle,
                           ),
                         )
@@ -142,7 +145,9 @@ class _ScheduleState extends State<ScheduleTab> {
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
-                    color: isToday ? primaryOf(c) : kMut,
+                    color: isToday
+                        ? primaryOf(c)
+                        : Theme.of(c).colorScheme.onSurfaceVariant,
                   ),
                 ),
                 Text(
@@ -164,12 +169,12 @@ class _ScheduleState extends State<ScheduleTab> {
                   r?['name'] ?? '(deleted routine)',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
-                  Text(
-                    r == null
-                        ? '${t12(s['t'])} · routine deleted'
-                        : '${t12(s['t'])} · $mins min${store.on('wr') ? ' · Today reminder on' : ''}',
-                    style: muted,
-                  ),
+                Text(
+                  r == null
+                      ? '${t12(s['t'])} · routine deleted'
+                      : '${t12(s['t'])} · $mins min${store.on('wr') ? ' · Today reminder on' : ''}',
+                  style: muted,
+                ),
               ],
             ),
           ),
@@ -191,9 +196,12 @@ class _ScheduleState extends State<ScheduleTab> {
                   value: 'start',
                   child: Text('Start workout'),
                 ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'delete',
-                child: Text('Delete', style: TextStyle(color: kRed)),
+                child: Text(
+                  'Delete',
+                  style: TextStyle(color: Theme.of(c).colorScheme.error),
+                ),
               ),
             ],
           ),
@@ -380,10 +388,7 @@ class _ScheduleWorkoutSheetState extends State<_ScheduleWorkoutSheet> {
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 4),
-              const Text(
-                'Choose a routine, date and time.',
-                style: muted,
-              ),
+              const Text('Choose a routine, date and time.', style: muted),
               const SizedBox(height: kGapLg),
               DropdownButtonFormField<dynamic>(
                 initialValue: _routineId,
@@ -460,42 +465,41 @@ class _ScheduleWorkoutSheetState extends State<_ScheduleWorkoutSheet> {
     required String label,
     required String value,
     required VoidCallback onTap,
-  }) =>
-      Material(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+  }) => Material(
+    color: Theme.of(context).colorScheme.surface,
+    borderRadius: BorderRadius.circular(14),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(icon, size: 18, color: primaryOf(context)),
-                    const SizedBox(width: kGapSm),
-                    Text(label, style: muted),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  value,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
-      );
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 18, color: primaryOf(context)),
+                const SizedBox(width: kGapSm),
+                Text(label, style: muted),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 
   Future<void> _pickDate() async {
     final now = DateTime.now();

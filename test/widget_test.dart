@@ -39,6 +39,30 @@ void main() {
           reason: '${palette.name} $brightness primary',
         );
         expect(
+          hasAccessibleContrast(
+            theme.colorScheme.onSurface,
+            theme.colorScheme.surface,
+          ),
+          isTrue,
+          reason: '${palette.name} $brightness text on card',
+        );
+        expect(
+          hasAccessibleContrast(
+            theme.colorScheme.onSurface,
+            theme.scaffoldBackgroundColor,
+          ),
+          isTrue,
+          reason: '${palette.name} $brightness text on background',
+        );
+        expect(
+          hasAccessibleContrast(
+            theme.colorScheme.onSurfaceVariant,
+            theme.colorScheme.surface,
+          ),
+          isTrue,
+          reason: '${palette.name} $brightness muted text on card',
+        );
+        expect(
           hasAccessibleContrast(tokens.heroForeground, tokens.heroBackground),
           isTrue,
           reason: '${palette.name} $brightness hero',
@@ -283,14 +307,14 @@ void main() {
     await tester.tap(paletteRow);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Ocean blue').last);
+    await tester.tap(find.text('Soft sand').last);
     await tester.pumpAndSettle();
-    expect(themeController.selectedPaletteId, 'ocean');
+    expect(themeController.selectedPaletteId, 'soft_sand');
 
     await tester.tap(find.text('Apply'));
     await tester.pumpAndSettle();
-    expect(find.text('Ocean blue'), findsOneWidget);
-    expect(store.d['palette'], 'ocean');
+    expect(find.text('Soft sand'), findsOneWidget);
+    expect(store.d['palette'], 'soft_sand');
 
     themeController.resetToDefault();
     themeController.applyPalette(AppPalette.teal.id);

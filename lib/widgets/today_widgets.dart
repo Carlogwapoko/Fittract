@@ -17,8 +17,9 @@ class StreakChip extends StatelessWidget {
       border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withValues(alpha: isDark(context) ? .16 : .06),
-          blurRadius: 12,
+          color: Theme.of(context).colorScheme.shadow
+              .withValues(alpha: isDark(context) ? .12 : .04),
+          blurRadius: 8,
           offset: const Offset(0, 3),
         ),
       ],
@@ -28,9 +29,9 @@ class StreakChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.local_fire_department,
-            color: Color(0xFFEA7A35),
+            color: appTokensOf(context).activity,
             size: 18,
           ),
           const SizedBox(width: 6),
@@ -118,8 +119,8 @@ class _RoundActionButtonState extends State<RoundActionButton> {
             child: Material(
               color: widget.backgroundColor,
               shape: shape,
-              elevation: _hovered ? 4 : 0,
-              shadowColor: primaryOf(context).withValues(alpha: .24),
+              elevation: _hovered ? 1 : 0,
+              shadowColor: primaryOf(context).withValues(alpha: .12),
               child: InkWell(
                 customBorder: shape,
                 splashFactory: NoSplash.splashFactory,
@@ -419,12 +420,9 @@ class TodayWorkoutCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = isDark(context);
     final tokens = appTokensOf(context);
     final background = tokens.heroBackground;
-    final badgeColor = dark
-        ? Colors.white.withValues(alpha: .1)
-        : tokens.heroForeground.withValues(alpha: .14);
+    final badgeColor = tokens.heroForeground.withValues(alpha: .14);
     final completedCount = weeklyCount.clamp(0, weeklyGoal);
     final empty = title == null;
 
@@ -438,10 +436,10 @@ class TodayWorkoutCard extends StatelessWidget {
       foregroundColor: primary
           ? tokens.heroActionForeground
           : tokens.heroForeground,
-      borderColor: primary ? null : Colors.white.withValues(alpha: .5),
+      borderColor: primary ? null : tokens.heroForeground.withValues(alpha: .5),
       backgroundColor: primary
           ? tokens.heroActionBackground
-          : Colors.white.withValues(alpha: .08),
+          : tokens.heroForeground.withValues(alpha: .08),
       height: 48,
       width: double.infinity,
     );
@@ -451,13 +449,10 @@ class TodayWorkoutCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: background.withValues(alpha: dark ? .36 : .2),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
-          ),
-        ],
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+          width: tokens.borderWidth,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

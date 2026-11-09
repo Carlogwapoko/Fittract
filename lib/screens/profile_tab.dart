@@ -150,7 +150,7 @@ class ProfileTab extends StatelessWidget {
                             child: Text(
                               name.isEmpty ? '?' : name[0].toUpperCase(),
                               style: TextStyle(
-                                color: isDark(c) ? kInk : Colors.white,
+                                color: Theme.of(c).colorScheme.onPrimary,
                                 fontSize: 26,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -366,7 +366,7 @@ class ProfileTab extends StatelessWidget {
               title: const Text('Cloud sync'),
               subtitle: Text(store.syncStatusMessage, style: muted),
               trailing: store.syncFailed
-                  ? const Icon(Icons.refresh, color: kRed)
+                  ? Icon(Icons.refresh, color: Theme.of(c).colorScheme.error)
                   : const Icon(Icons.cloud_done_outlined),
               onTap: !store.syncFailed
                   ? null
@@ -516,8 +516,10 @@ class _ColorPaletteSheetState extends State<_ColorPaletteSheet> {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(
-            color: selected ? colors.primary : colors.outlineVariant,
-            width: selected ? 2 : 1,
+            color: selected && palette.borderWidth <= 1
+                ? colors.primary
+                : colors.outlineVariant,
+            width: selected ? 2 : palette.borderWidth,
           ),
         ),
         child: InkWell(
@@ -545,13 +547,29 @@ class _ColorPaletteSheetState extends State<_ColorPaletteSheet> {
                       Icon(Icons.check_circle, color: colors.primary, size: 20),
                   ],
                 ),
+                const SizedBox(height: kGapXs),
+                Text(
+                  palette.subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
                 const SizedBox(height: kGapMd),
                 Row(
                   children: [
                     for (final color in [
-                      palette.primary,
-                      palette.lightTint,
-                      palette.hero,
+                      if (isDark(context)) ...[
+                        palette.darkPrimary,
+                        palette.darkTint,
+                        palette.darkHero,
+                      ] else ...[
+                        palette.primary,
+                        palette.lightTint,
+                        palette.hero,
+                      ],
                     ])
                       Expanded(
                         child: Container(

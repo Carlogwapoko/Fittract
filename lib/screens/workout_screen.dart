@@ -563,7 +563,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
             onPressed: () => Navigator.pop(dialogContext),
             style: FilledButton.styleFrom(
               backgroundColor: primaryOf(dialogContext),
-              foregroundColor: isDark(dialogContext) ? kInk : Colors.white,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onPrimary,
             ),
             child: const Text('Done'),
           ),
@@ -755,7 +755,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
               value: progress,
               minHeight: 8,
               color: appTokensOf(context).mintTint,
-              backgroundColor: Colors.white24,
+              backgroundColor: appTokensOf(context).divider,
             ),
           ),
           if (restLeft > 0) ...[
@@ -765,8 +765,8 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: Text(
                     'Rest ${_clock(restLeft)}',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: appTokensOf(context).heroForeground,
                       fontWeight: FontWeight.w700,
                       fontFeatures: [FontFeature.tabularFigures()],
                     ),
@@ -777,8 +777,10 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                   child: OutlinedButton(
                     onPressed: () => _changeRest(15),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white70),
+                      foregroundColor: appTokensOf(context).heroForeground,
+                      side: BorderSide(
+                        color: appTokensOf(context).heroForeground,
+                      ),
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                     ),
                     child: const Text('+15s'),
@@ -789,7 +791,9 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                   height: 40,
                   child: TextButton(
                     onPressed: _skipRest,
-                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    style: TextButton.styleFrom(
+                      foregroundColor: appTokensOf(context).heroForeground,
+                    ),
                     child: const Text('Skip'),
                   ),
                 ),
@@ -1051,7 +1055,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                 style: IconButton.styleFrom(
                   backgroundColor: checked ? primaryOf(context) : null,
                   foregroundColor: checked
-                      ? (isDark(context) ? kInk : Colors.white)
+                      ? Theme.of(context).colorScheme.onPrimary
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                   side: BorderSide(
                     color: checked
@@ -1180,7 +1184,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                 ? primaryOf(context)
                 : tintOf(context),
             foregroundColor: _doneCount == exs.length && exs.isNotEmpty
-                ? (isDark(context) ? kInk : Colors.white)
+                ? Theme.of(context).colorScheme.onPrimary
                 : primaryOf(context),
           ),
           child: const Text('Finish workout'),
@@ -1231,7 +1235,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(48),
                   backgroundColor: primaryOf(context),
-                  foregroundColor: isDark(context) ? kInk : Colors.white,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 ),
                 child: Text(i == exs.length - 1 ? 'Finish ✓' : 'Next ›'),
               ),

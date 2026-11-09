@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../services/weight_estimator.dart';
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/log_activity_sheet.dart';
 import '../widgets/shared_widgets.dart';
 import '../widgets/today_widgets.dart';
@@ -164,7 +165,6 @@ class _TodayTabState extends State<TodayTab> {
         ? 'Estimated from calories consumed and burned'
         : _weightSubtitle(weightEstimate, weightEntries);
     final unreadCount = newReminders ? reminders : 0;
-    final dark = isDark(c);
     final primary = primaryOf(c);
     final caloriesOverGoal = caloriesEaten > calorieGoal;
     final waterGoalReached = waterMl >= waterGoalMl;
@@ -189,15 +189,15 @@ class _TodayTabState extends State<TodayTab> {
             child: Container(
               constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
               padding: const EdgeInsets.symmetric(horizontal: 4),
-              decoration: const BoxDecoration(
-                color: Color(0xFFC83D3D),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.error,
                 shape: BoxShape.circle,
               ),
               alignment: Alignment.center,
               child: Text(
                 unreadCount > 9 ? '9+' : '$unreadCount',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onError,
                   fontSize: 9,
                   fontWeight: FontWeight.w800,
                 ),
@@ -368,14 +368,10 @@ class _TodayTabState extends State<TodayTab> {
                         progress: caloriesEaten / calorieGoal,
                         icon: Icons.restaurant,
                         backgroundColor: caloriesOverGoal
-                            ? (dark
-                                  ? const Color(0xFF3A2D23)
-                                  : const Color(0xFFFFF2E8))
+                            ? Theme.of(c).colorScheme.errorContainer
                             : null,
                         subtitleColor: caloriesOverGoal
-                            ? (dark
-                                  ? const Color(0xFFFFBF80)
-                                  : const Color(0xFF9A4D0A))
+                            ? Theme.of(c).colorScheme.onErrorContainer
                             : null,
                         onTap: () => go(c, const ManualMealScreen()),
                       ),
@@ -394,13 +390,12 @@ class _TodayTabState extends State<TodayTab> {
                             : '${((waterGoalMl - waterMl) / 1000).toStringAsFixed(1)} L to go',
                         progress: waterMl / waterGoalMl,
                         icon: Icons.water_drop,
-                        accentColor: const Color(0xFF1D6FB8),
+                        accentColor: appTokensOf(c).water,
                         backgroundColor: waterGoalReached
-                            ? const Color(0xFF1D6FB8)
-                                  .withValues(alpha: dark ? .2 : .1)
+                            ? appTokensOf(c).water.withValues(alpha: .12)
                             : null,
                         subtitleColor: waterGoalReached
-                            ? const Color(0xFF1D6FB8)
+                            ? appTokensOf(c).water
                             : null,
                         onTap: () => showWaterActivity(c),
                       ),
@@ -420,7 +415,7 @@ class _TodayTabState extends State<TodayTab> {
                             'of ${store.withThousands(stepGoal)} steps today',
                         progress: store.steps / stepGoal,
                         icon: Icons.directions_run,
-                        accentColor: const Color(0xFFB25E09),
+                        accentColor: appTokensOf(c).activity,
                         onTap: () => go(c, const ActivityScreen()),
                       ),
                     ),

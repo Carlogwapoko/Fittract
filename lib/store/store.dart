@@ -17,20 +17,7 @@ import 'password_hash_web_stub.dart'
     if (dart.library.js_interop) 'password_hash_web.dart'
     as web_hash;
 
-// ───────────────────────── THEME ─────────────────────────
-const kPri = Color(0xFF0A7F6F);
-const kDk = Color(0xFF1A4640);
-const kLt = Color(0xFFD3EFE5);
-const kBg = Color(0xFFF0F4F4);
-const kInk = Color(0xFF0F2D29);
-const kMut = Color(0xFF6F8A86);
-const kLn = Color(0xFFE4ECEC);
-const kRed = Color(0xFFC0392B);
-const kMint = Color(0xFFA6EAD5);
-const kBgDark = Color(0xFF0E1A19);
-const kSurfaceDark = Color(0xFF162826);
-const kLineDark = Color(0xFF29413D);
-const muted = TextStyle(color: kMut, fontSize: 12);
+const muted = TextStyle(fontSize: 12);
 
 bool isDark(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark;
@@ -597,6 +584,7 @@ String? validateSetRow(List<Map<String, dynamic>> row) {
 class Store extends ChangeNotifier {
   late SharedPreferences sp;
   Map<String, dynamic> d = {};
+  bool _initialized = false;
 
   String? _sessionKey;
   String? _sessionProvider; // 'email' | 'google'
@@ -604,6 +592,7 @@ class Store extends ChangeNotifier {
   String? _sessionUid; // Firebase uid when the account is cloud-linked
 
   bool get hasActiveSession => _sessionKey != null;
+  bool get isInitialized => _initialized;
   bool get isEmailAccount => _sessionProvider == 'email';
   bool get hasLocalCredential => d['cred'] is Map;
   String? get sessionUid => _sessionUid;
@@ -761,6 +750,7 @@ class Store extends ChangeNotifier {
 
   Future<void> init() async {
     sp = await SharedPreferences.getInstance();
+    _initialized = true;
     await _migrateLegacyData();
     _loadSession();
     roll();

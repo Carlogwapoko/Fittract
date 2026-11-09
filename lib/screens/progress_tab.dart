@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/weight_estimator.dart';
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
 import 'weight_screen.dart';
 
@@ -17,31 +18,37 @@ class _ProgressState extends State<ProgressTab> {
   int tab = 0;
   bool all = false;
 
-  Widget stat(IconData icon, String big, String sub) => Expanded(
-    child: card(
-      color: kDk,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: primaryOf(context), size: 18),
-          const SizedBox(height: kGapSm),
-          Text(
-            big,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
+  Widget stat(IconData icon, String big, String sub) {
+    final tokens = appTokensOf(context);
+    return Expanded(
+      child: card(
+        color: tokens.heroBackground,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: tokens.mintTint, size: 18),
+            const SizedBox(height: kGapSm),
+            Text(
+              big,
+              style: TextStyle(
+                color: tokens.heroForeground,
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            sub,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Text(
+              sub,
+              style: TextStyle(
+                color: tokens.heroForeground.withValues(alpha: .82),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   List<Widget> overview(BuildContext c) {
     // Dates are stringified rather than cast: retention keeps entries whose

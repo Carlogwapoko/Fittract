@@ -157,7 +157,7 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                       _activities[i].icon,
                       size: 18,
                       color: _selected == i
-                          ? (isDark(context) ? kInk : Colors.white)
+                          ? Theme.of(context).colorScheme.onPrimary
                           : primaryOf(context),
                     ),
                     label: Text(_activities[i].name),
@@ -166,7 +166,7 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                     selectedColor: primaryOf(context),
                     labelStyle: TextStyle(
                       color: _selected == i
-                          ? (isDark(context) ? kInk : Colors.white)
+                          ? Theme.of(context).colorScheme.onPrimary
                           : Theme.of(context).colorScheme.onSurface,
                       fontWeight: FontWeight.w600,
                     ),
@@ -314,8 +314,8 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                   icon: const Icon(Icons.stop),
                   label: const Text('Stop'),
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF9B3D3D),
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
                     minimumSize: const Size.fromHeight(50),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),

@@ -247,10 +247,11 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
     String label, {
     Widget? suffixIcon,
   }) {
-    const borderColor = Color(0xFF9DB5B1);
+    final borderColor = Theme.of(context).colorScheme.outline;
+    final borderWidth = appTokensOf(context).inputBorderWidth;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
-      borderSide: const BorderSide(color: borderColor, width: 1.5),
+      borderSide: BorderSide(color: borderColor, width: borderWidth),
     );
     return InputDecoration(
       labelText: label,
@@ -264,15 +265,24 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
       enabledBorder: border,
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: primaryOf(context), width: 3),
+        borderSide: BorderSide(
+          color: primaryOf(context),
+          width: appTokensOf(context).focusedInputBorderWidth,
+        ),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: kRed, width: 1.5),
+        borderSide: BorderSide(
+          color: Theme.of(context).colorScheme.error,
+          width: borderWidth,
+        ),
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: kRed, width: 3),
+        borderSide: BorderSide(
+          color: Theme.of(context).colorScheme.error,
+          width: appTokensOf(context).focusedInputBorderWidth,
+        ),
       ),
     );
   }
@@ -344,12 +354,12 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
 
   Widget _passwordStrengthMeter(BuildContext context) {
     final strength = _passwordStrength;
+    final colors = Theme.of(context).colorScheme;
     final color = switch (strength) {
-      0 => Theme.of(context).colorScheme.outlineVariant,
-      1 => const Color(0xFFCA5757),
-      2 => const Color(0xFFE6A23C),
-      3 => const Color(0xFF8DAE45),
-      _ => const Color(0xFF16806F),
+      0 => colors.outlineVariant,
+      1 => colors.error,
+      2 => colors.tertiary,
+      _ => colors.primary,
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -481,7 +491,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                         end: Alignment.bottomRight,
                         colors: [
                           appTokensOf(context).heroBackground,
-                          Theme.of(context).colorScheme.primary,
+                          appTokensOf(context).heroBackground,
                         ],
                       ),
                     ),
@@ -504,8 +514,8 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                               reg
                                   ? 'Build a routine.\nFind your rhythm.'
                                   : 'Small steps.\nStronger you.',
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: appTokensOf(context).heroForeground,
                                 fontSize: 27,
                                 fontWeight: FontWeight.w800,
                                 height: 1.08,
@@ -605,7 +615,12 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                   if (err.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Text(err, style: const TextStyle(color: kRed)),
+                      child: Text(
+                        err,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ),
                   if (notice.isNotEmpty)
                     Padding(
@@ -623,12 +638,14 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                       style: ButtonStyle(
                         backgroundColor: WidgetStateProperty.resolveWith(
                           (states) => states.contains(WidgetState.disabled)
-                              ? const Color(0xFFB7C0BE)
+                              ? Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
                               : Theme.of(context).colorScheme.primary,
                         ),
                         foregroundColor: WidgetStateProperty.resolveWith(
                           (states) => states.contains(WidgetState.disabled)
-                              ? const Color(0xFF485552)
+                              ? Theme.of(context).colorScheme.onSurfaceVariant
                               : Theme.of(context).colorScheme.onPrimary,
                         ),
                         side: WidgetStateProperty.resolveWith(
@@ -643,12 +660,12 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                         ),
                       ),
                       child: emailBusy
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 22,
                               height: 22,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: Theme.of(context).colorScheme.primary,
                               ),
                             )
                           : Text(reg ? 'Create account' : 'Log in'),
@@ -688,20 +705,20 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                           ? null
                           : signInWithGoogle,
                       style: ButtonStyle(
-                        backgroundColor: const WidgetStatePropertyAll(
-                          Colors.white,
+                        backgroundColor: WidgetStatePropertyAll(
+                          Theme.of(context).colorScheme.surface,
                         ),
-                        foregroundColor: const WidgetStatePropertyAll(
-                          Color(0xFF202124),
+                        foregroundColor: WidgetStatePropertyAll(
+                          Theme.of(context).colorScheme.onSurface,
                         ),
                         side: WidgetStateProperty.resolveWith(
                           (states) => BorderSide(
                             color: states.contains(WidgetState.focused)
                                 ? primaryOf(context)
-                                : const Color(0xFF9DB5B1),
+                                : Theme.of(context).colorScheme.outline,
                             width: states.contains(WidgetState.focused)
-                                ? 3
-                                : 1.5,
+                                ? appTokensOf(context).focusedInputBorderWidth
+                                : appTokensOf(context).inputBorderWidth,
                           ),
                         ),
                         shape: WidgetStatePropertyAll(

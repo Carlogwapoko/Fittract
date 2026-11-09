@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
 
 class WaterScreen extends StatelessWidget {
@@ -32,9 +33,11 @@ class WaterScreen extends StatelessWidget {
     final wl = store.d['water'] as List;
     final todays = wl.where((e) => e['d'] == today()).toList();
     final last = todays.isEmpty ? null : todays.last;
+    final tokens = appTokensOf(c);
+    final onWater = contrastingOn(tokens.water);
     final waterContent = <Widget>[
       card(
-        color: kDk,
+        color: tokens.heroBackground,
         pad: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -46,22 +49,24 @@ class WaterScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Daily hydration',
-                        style: TextStyle(color: Colors.white70),
+                        style: TextStyle(
+                          color: tokens.heroForeground.withValues(alpha: .82),
+                        ),
                       ),
                       Text(
                         '${(w / 1000).toStringAsFixed(1)} L',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: tokens.heroForeground,
                           fontSize: 34,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                       Text(
                         'of ${(waterGoalMl / 1000).toStringAsFixed(1)} L goal · ${((w / waterGoalMl) * 100).clamp(0, 100).round()}% complete',
-                        style: const TextStyle(
-                          color: Colors.white70,
+                        style: TextStyle(
+                          color: tokens.heroForeground.withValues(alpha: .82),
                           fontSize: 12,
                         ),
                       ),
@@ -71,10 +76,10 @@ class WaterScreen extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white12,
+                    color: tokens.heroForeground.withValues(alpha: .1),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(Icons.water_drop, color: Colors.white),
+                  child: Icon(Icons.water_drop, color: tokens.heroForeground),
                 ),
               ],
             ),
@@ -88,14 +93,16 @@ class WaterScreen extends StatelessWidget {
                       margin: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
                         color: i < filledCells
-                            ? const Color(0xFF1D6FB8)
-                            : Colors.white12,
+                            ? tokens.water
+                            : tokens.heroForeground.withValues(alpha: .1),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Icon(
                         Icons.local_drink_outlined,
                         size: 14,
-                        color: i < filledCells ? kDk : Colors.white54,
+                        color: i < filledCells
+                            ? onWater
+                            : tokens.heroForeground.withValues(alpha: .7),
                       ),
                     ),
                   ),
@@ -104,7 +111,10 @@ class WaterScreen extends StatelessWidget {
             const SizedBox(height: kGapSm),
             Text(
               '$filledCells of 10 marks · goal ${(waterGoalMl / 1000).toStringAsFixed(1)} L (${waterGoalMl ~/ 10} ml per mark)',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(
+                color: tokens.heroForeground.withValues(alpha: .82),
+                fontSize: 12,
+              ),
             ),
             const SizedBox(height: kGapMd),
             Row(

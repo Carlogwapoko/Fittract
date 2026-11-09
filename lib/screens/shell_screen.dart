@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import 'today_tab.dart';
 import 'routines_tab.dart';
 import 'schedule_tab.dart';
@@ -111,17 +112,21 @@ class _TodayNavigationBar extends StatelessWidget {
     final dark = isDark(context);
     final colors = Theme.of(context).colorScheme;
     final selectedColor = colors.primary;
+    final tokens = appTokensOf(context);
 
     return Container(
       decoration: BoxDecoration(
         color: colors.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? .24 : .08),
-            blurRadius: 16,
-            offset: const Offset(0, -4),
+            color: colors.shadow.withValues(alpha: dark ? .12 : .04),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
           ),
         ],
+        border: Border(
+          top: BorderSide(color: tokens.divider, width: tokens.borderWidth),
+        ),
       ),
       child: SafeArea(
         top: false,

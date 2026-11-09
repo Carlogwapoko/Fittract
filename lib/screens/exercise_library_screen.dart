@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
 
 const _library = <Map<String, dynamic>>[
@@ -282,11 +283,15 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
     ValueChanged<String> onSelected,
   ) => ShaderMask(
     blendMode: BlendMode.dstIn,
-    shaderCallback: (bounds) => const LinearGradient(
+    shaderCallback: (bounds) => LinearGradient(
       begin: Alignment.centerLeft,
       end: Alignment.centerRight,
       stops: [0, .82, 1],
-      colors: [Colors.black, Colors.black, Colors.transparent],
+      colors: [
+        Theme.of(context).colorScheme.scrim,
+        Theme.of(context).colorScheme.scrim,
+        Colors.transparent,
+      ],
     ).createShader(bounds),
     child: SizedBox(
       height: 42,
@@ -304,7 +309,7 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
             selectedColor: primaryOf(context),
             labelStyle: TextStyle(
               color: active
-                  ? (isDark(context) ? kInk : Colors.white)
+                  ? Theme.of(context).colorScheme.onPrimary
                   : Theme.of(context).colorScheme.onSurface,
               fontWeight: FontWeight.w600,
             ),
@@ -451,13 +456,13 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
                 backgroundColor: primaryOf(context),
-                foregroundColor: isDark(context) ? kInk : Colors.white,
-                disabledBackgroundColor: isDark(context)
-                    ? const Color(0xFF293735)
-                    : const Color(0xFFD8E0DF),
-                disabledForegroundColor: isDark(context)
-                    ? const Color(0xFFB7C3C0)
-                    : const Color(0xFF53615E),
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                disabledBackgroundColor: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest,
+                disabledForegroundColor: Theme.of(context)
+                    .colorScheme
+                    .onSurfaceVariant,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -609,15 +614,8 @@ class _ExerciseLibraryScreenState extends State<ExerciseLibraryScreen> {
     );
   }
 
-  Color _difficultyColor(BuildContext context, String level) {
-    final dark = isDark(context);
-    return switch (level) {
-      'Beginner' => dark ? const Color(0xFFA7F3B1) : const Color(0xFF14532D),
-      'Intermediate' =>
-        dark ? const Color(0xFFFFD080) : const Color(0xFF7A4300),
-      _ => dark ? const Color(0xFFFF9B91) : const Color(0xFF8B1E1E),
-    };
-  }
+  Color _difficultyColor(BuildContext context, String _) =>
+      Theme.of(context).colorScheme.primary;
 
   IconData _libraryIconFor(Object? name, Object? group) {
     final value = (name ?? '').toString().toLowerCase();
@@ -828,9 +826,9 @@ class _CustomExerciseSheetState extends State<_CustomExerciseSheet> {
                               CircleAvatar(
                                 radius: 19,
                                 backgroundColor: primaryOf(context),
-                                foregroundColor: isDark(context)
-                                    ? kInk
-                                    : Colors.white,
+                                foregroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .onPrimary,
                                 child: Text(
                                   summaryName.characters.first.toUpperCase(),
                                   style: const TextStyle(
@@ -865,7 +863,7 @@ class _CustomExerciseSheetState extends State<_CustomExerciseSheet> {
                     style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                       backgroundColor: primaryOf(context),
-                      foregroundColor: isDark(context) ? kInk : Colors.white,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
@@ -886,31 +884,37 @@ class _CustomExerciseSheetState extends State<_CustomExerciseSheet> {
     String? hint,
     String? errorText,
   }) {
-    final dark = isDark(context);
-    final borderColor = dark
-        ? const Color(0xFF8AA39D)
-        : const Color(0xFF526A65);
+    final colors = Theme.of(context).colorScheme;
     return InputDecoration(
       labelText: label,
       hintText: hint,
       errorText: errorText,
       floatingLabelBehavior: FloatingLabelBehavior.auto,
-      labelStyle: TextStyle(color: dark ? const Color(0xFFD2E1DD) : kDk),
+      labelStyle: TextStyle(color: colors.onSurfaceVariant),
       floatingLabelStyle: TextStyle(
         color: primaryOf(context),
         fontWeight: FontWeight.w700,
       ),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: borderColor, width: 1.5),
+        borderSide: BorderSide(
+          color: colors.outline,
+          width: appTokensOf(context).inputBorderWidth,
+        ),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: borderColor, width: 1.5),
+        borderSide: BorderSide(
+          color: colors.outline,
+          width: appTokensOf(context).inputBorderWidth,
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: primaryOf(context), width: 3),
+        borderSide: BorderSide(
+          color: primaryOf(context),
+          width: appTokensOf(context).focusedInputBorderWidth,
+        ),
       ),
     );
   }
@@ -938,7 +942,7 @@ class _CustomExerciseSheetState extends State<_CustomExerciseSheet> {
     selectedColor: primaryOf(context),
     labelStyle: TextStyle(
       color: selected
-          ? (isDark(context) ? kInk : Colors.white)
+          ? Theme.of(context).colorScheme.onPrimary
           : Theme.of(context).colorScheme.onSurface,
       fontWeight: FontWeight.w600,
     ),

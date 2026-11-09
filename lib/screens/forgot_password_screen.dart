@@ -97,7 +97,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           if (_error.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: kGapMd),
-              child: Text(_error, style: const TextStyle(color: kRed)),
+              child: Text(
+                _error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
           if (_notice.isNotEmpty)
             Padding(

@@ -164,7 +164,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
                 ),
                 Icon(
                   Icons.delete_outline,
-                  color: kRed,
+                  color: Theme.of(c).colorScheme.error,
                   semanticLabel: 'Remove activity',
                 ),
               ],

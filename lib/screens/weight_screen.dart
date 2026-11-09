@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../services/weight_estimator.dart';
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
 
 class WeightScreen extends StatefulWidget {
@@ -165,16 +166,8 @@ class _WeightState extends State<WeightScreen> {
   }) {
     final colors = Theme.of(context).colorScheme;
     final hasCurrentWeight = currentKg > 0;
-    final changeColor = change == null || change.abs() < .05
-        ? colors.onSurfaceVariant
-        : change < 0
-        ? const Color(0xFF21845A)
-        : const Color(0xFF9A5A00);
-    final pillBackground = change == null || change.abs() < .05
-        ? colors.surfaceContainerHighest
-        : change < 0
-        ? const Color(0xFFE0F3E9)
-        : const Color(0xFFFFF0D8);
+    final changeColor = colors.onSurfaceVariant;
+    final pillBackground = colors.surfaceContainerHighest;
     final dateText = DateFormat('EEE, MMM d').format(todayDate);
     final dailyDetails = visibleDays.reversed.toList();
     final chartLabel = _chartDescription(visibleDays);
@@ -352,8 +345,8 @@ class _WeightState extends State<WeightScreen> {
     final dailyChange = previous == null ? null : day.kg - previous.kg;
     final colors = Theme.of(context).colorScheme;
     final todayColor = tintOf(context);
-    final teal = primaryOf(context);
-    const amber = Color(0xFFB36A00);
+    final primary = primaryOf(context);
+    final activityColor = appTokensOf(context).activity;
 
     return Column(
       children: [
@@ -386,7 +379,7 @@ class _WeightState extends State<WeightScreen> {
                           Text(
                             'TODAY',
                             style: TextStyle(
-                              color: teal,
+                              color: primary,
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               letterSpacing: .5,
@@ -404,7 +397,7 @@ class _WeightState extends State<WeightScreen> {
                           ? '--'
                           : store.withThousands(day.caloriesConsumed!),
                       'consumed',
-                      teal,
+                      primary,
                     ),
                   ),
                   Expanded(
@@ -412,7 +405,7 @@ class _WeightState extends State<WeightScreen> {
                     child: _dailyValue(
                       store.withThousands(day.caloriesBurned),
                       'burned',
-                      amber,
+                      activityColor,
                     ),
                   ),
                   Expanded(
@@ -436,11 +429,7 @@ class _WeightState extends State<WeightScreen> {
                               : '${dailyChange >= 0 ? '+' : ''}${dailyChange.toStringAsFixed(2)} kg',
                           maxLines: 1,
                           style: TextStyle(
-                            color: dailyChange == null
-                                ? colors.onSurfaceVariant
-                                : dailyChange < 0
-                                ? const Color(0xFF21845A)
-                                : amber,
+                            color: colors.onSurfaceVariant,
                             fontSize: 10,
                           ),
                         ),
@@ -462,7 +451,7 @@ class _WeightState extends State<WeightScreen> {
             ),
           ),
         ),
-        if (isExpanded) _dailyRecordDetails(day, teal, amber),
+        if (isExpanded) _dailyRecordDetails(day, primary, activityColor),
       ],
     );
   }
@@ -486,8 +475,8 @@ class _WeightState extends State<WeightScreen> {
 
   Widget _dailyRecordDetails(
     WeightEstimateDay day,
-    Color teal,
-    Color amber,
+    Color primary,
+    Color activityColor,
   ) => Padding(
     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
     child: Column(
@@ -497,7 +486,7 @@ class _WeightState extends State<WeightScreen> {
         const SizedBox(height: 8),
         Text(
           'Meals',
-          style: TextStyle(color: teal, fontWeight: FontWeight.w700),
+          style: TextStyle(color: primary, fontWeight: FontWeight.w700),
         ),
         if (day.meals.isEmpty)
           const Padding(
@@ -513,7 +502,7 @@ class _WeightState extends State<WeightScreen> {
         const SizedBox(height: 8),
         Text(
           'Activities',
-          style: TextStyle(color: amber, fontWeight: FontWeight.w700),
+          style: TextStyle(color: activityColor, fontWeight: FontWeight.w700),
         ),
         if (day.activities.isEmpty && day.workouts.isEmpty)
           const Padding(

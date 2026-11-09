@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
+import '../theme/app_palette.dart';
 
 const kGapXs = 4.0;
 const kGapSm = 8.0;
@@ -19,23 +20,24 @@ Widget card({
 }) => Padding(
   padding: const EdgeInsets.only(bottom: kGapMd),
   child: Builder(
-    builder: (context) => Material(
-      color: color ?? Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: color == null
-            ? BorderSide(color: Theme.of(context).colorScheme.outlineVariant)
-            : BorderSide.none,
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Padding(
-          padding: pad ?? const EdgeInsets.all(kGapLg),
-          child: SizedBox(width: double.infinity, child: child),
+    builder: (context) {
+      final tokens = appTokensOf(context);
+      return Material(
+        color: color ?? Theme.of(context).colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: tokens.divider, width: tokens.borderWidth),
         ),
-      ),
-    ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: pad ?? const EdgeInsets.all(kGapLg),
+            child: SizedBox(width: double.infinity, child: child),
+          ),
+        ),
+      );
+    },
   ),
 );
 
@@ -127,9 +129,7 @@ Widget bar(double p, {bool dark = false}) => Padding(
         value: progressOf(p),
         minHeight: 6,
         color: primaryOf(context),
-        backgroundColor: dark
-            ? Colors.white24
-            : (isDark(context) ? kLineDark : kLn),
+        backgroundColor: appTokensOf(context).divider,
       ),
     ),
   ),
@@ -173,15 +173,14 @@ class _AnimatedButtonState extends State<_AnimatedButton> {
 
   @override
   Widget build(BuildContext context) {
-    final dark = isDark(context);
-    final primary = primaryOf(context);
+    final colors = Theme.of(context).colorScheme;
     final foreground = widget.danger
-        ? kRed
-        : (widget.tonal ? primary : (dark ? kInk : Colors.white));
+        ? colors.error
+        : (widget.tonal ? colors.primary : colors.onPrimary);
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(14),
       side: widget.danger
-          ? const BorderSide(color: kRed, width: 1.2)
+          ? BorderSide(color: colors.error, width: 1.2)
           : BorderSide.none,
     );
 
@@ -206,7 +205,7 @@ class _AnimatedButtonState extends State<_AnimatedButton> {
               decoration: ShapeDecoration(
                 color: widget.danger
                     ? Colors.transparent
-                    : (widget.tonal ? tintOf(context) : primary),
+                    : (widget.tonal ? tintOf(context) : colors.primary),
                 shape: shape,
               ),
               child: SizedBox(

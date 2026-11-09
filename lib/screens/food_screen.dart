@@ -269,7 +269,10 @@ class FoodScreen extends StatelessWidget {
               store.meals.removeAt(index);
               store.save();
             },
-            icon: const Icon(Icons.close, color: kMut),
+            icon: Icon(
+              Icons.close,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
