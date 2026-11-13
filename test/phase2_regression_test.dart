@@ -16,6 +16,7 @@ import 'package:fittract/screens/workout_screen.dart';
 import 'package:fittract/services/google_auth_service.dart';
 import 'package:fittract/store/store.dart';
 import 'package:fittract/widgets/shared_widgets.dart';
+import 'package:fittract/main.dart';
 
 void _ignoreTab(int _) {}
 
@@ -537,6 +538,39 @@ void main() {
   });
 
   group('local-first sign-out', () {
+    testWidgets('Cancel keeps the current session active', (tester) async {
+      largeViewport(tester);
+      await freshStore();
+      store.activateGoogleAccount(
+        uid: 'uid-cancel',
+        email: 'cancel@example.com',
+        displayName: 'Cancel User',
+      );
+      var remoteSignOutCalls = 0;
+      GoogleAuthService.debugSignOutOverride = () async {
+        remoteSignOutCalls++;
+      };
+      addTearDown(() => GoogleAuthService.debugSignOutOverride = null);
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: ProfileTab())),
+      );
+      await tester.pumpAndSettle();
+
+      await tapBtn(tester, 'Log out');
+      await tester.pumpAndSettle();
+      expect(find.text('Are you sure you want to log out?'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Log Out'), findsOneWidget);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(store.hasActiveSession, isTrue);
+      expect(remoteSignOutCalls, 0);
+      expect(find.text('Log out'), findsOneWidget);
+    });
+
     testWidgets(
       'remote sign-out failure still signs the user out locally, with a warning',
       (tester) async {
@@ -558,6 +592,9 @@ void main() {
         await tester.pumpAndSettle();
 
         await tapBtn(tester, 'Log out');
+        await tester.pumpAndSettle();
+        expect(find.text('Are you sure you want to log out?'), findsOneWidget);
+        await tester.tap(find.text('Log Out'));
         await tester.pumpAndSettle();
 
         expect(store.hasActiveSession, isFalse);
@@ -589,9 +626,37 @@ void main() {
 
       await tapBtn(tester, 'Log out');
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Log Out'));
+      await tester.pumpAndSettle();
 
       expect(store.hasActiveSession, isFalse);
       expect(find.textContaining('signed out on this device'), findsNothing);
+    });
+
+    testWidgets('confirmed logout returns the app to Sign In', (tester) async {
+      largeViewport(tester);
+      await freshStore();
+      store.activateGoogleAccount(
+        uid: 'uid-redirect',
+        email: 'redirect@example.com',
+        displayName: 'Redirect User',
+      );
+      GoogleAuthService.debugSignOutOverride = () async {};
+      addTearDown(() => GoogleAuthService.debugSignOutOverride = null);
+
+      await tester.pumpWidget(const App());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Profile'));
+      await tester.pumpAndSettle();
+
+      await tapBtn(tester, 'Log out');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Log Out'));
+      await tester.pumpAndSettle();
+
+      expect(store.hasActiveSession, isFalse);
+      expect(find.text('Welcome back'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
     });
   });
 

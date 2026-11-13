@@ -40,8 +40,15 @@ String _migrationMessage(CloudMigrationResult result) => switch (result) {
     'Cloud backup failed. Your data is untouched on this device.',
 };
 
-class ProfileTab extends StatelessWidget {
+class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
+
+  @override
+  State<ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<ProfileTab> {
+  bool _logoutInProgress = false;
 
   /// Uploads an existing local email account to Firebase. The password is
   /// verified against the on-device PBKDF2 hash *before* the confirmation
@@ -88,7 +95,7 @@ class ProfileTab extends StatelessWidget {
     if (weight != null) {
       final weights = store.d['weights'] as List;
       if (weights.isEmpty && store.goalField('sw') == 0) {
-        store.goal['sw'] = weight;
+        store.ensureGoal()['sw'] = weight;
       }
       weights.removeWhere((entry) => entry[0] == today());
       weights.add([today(), weight]);
@@ -104,6 +111,42 @@ class ProfileTab extends StatelessWidget {
       builder: (_) => const _ColorPaletteSheet(),
     );
     if (applied != true) themeController.cancelPalettePreview();
+  }
+
+  Future<void> _logOut(BuildContext c) async {
+    if (_logoutInProgress) return;
+    setState(() => _logoutInProgress = true);
+    try {
+      if (!await confirm(c, 'Are you sure you want to log out?', 'Log Out') ||
+          !mounted) {
+        return;
+      }
+
+      // Local-first sign-out: the device session always ends, even when the
+      // remote Google/Firebase sign-out fails. The failure is surfaced as a
+      // warning while this screen is still mounted, then local sign-out
+      // proceeds unconditionally so a flaky network can never trap the
+      // user in a signed-in state.
+      String? remoteWarning;
+      if (!store.isEmailAccount && store.hasActiveSession) {
+        try {
+          await GoogleAuthService().signOut();
+        } on FirebaseAuthException catch (error) {
+          remoteWarning = googleAuthErrorMessage(error);
+        } on FirebaseException catch (error) {
+          remoteWarning = googleAuthErrorMessage(error);
+        } on GoogleSignInException catch (error) {
+          remoteWarning = googleAuthErrorMessage(error);
+        }
+      }
+
+      if (remoteWarning != null && remoteWarning.isNotEmpty && c.mounted) {
+        snack(c, '$remoteWarning You are signed out on this device.');
+      }
+      await store.signOutAsync();
+    } finally {
+      if (mounted) setState(() => _logoutInProgress = false);
+    }
   }
 
   Widget sw(BuildContext context, String k, String title, String sub) =>
@@ -398,30 +441,14 @@ class ProfileTab extends StatelessWidget {
           ],
         ),
       ),
-      btn('Log out', () async {
-        // Local-first sign-out: the device session always ends, even when the
-        // remote Google/Firebase sign-out fails. The failure is surfaced as a
-        // warning while this screen is still mounted, then local sign-out
-        // proceeds unconditionally so a flaky network can never trap the
-        // user in a signed-in state.
-        String? remoteWarning;
-        if (!store.isEmailAccount && store.hasActiveSession) {
-          try {
-            await GoogleAuthService().signOut();
-          } on FirebaseAuthException catch (error) {
-            remoteWarning = googleAuthErrorMessage(error);
-          } on FirebaseException catch (error) {
-            remoteWarning = googleAuthErrorMessage(error);
-          } on GoogleSignInException catch (error) {
-            remoteWarning = googleAuthErrorMessage(error);
-          }
-        }
-
-        if (remoteWarning != null && remoteWarning.isNotEmpty && c.mounted) {
-          snack(c, '$remoteWarning You are signed out on this device.');
-        }
-        await store.signOutAsync();
-      }, tonal: true),
+      IgnorePointer(
+        ignoring: _logoutInProgress,
+        child: btn(
+          _logoutInProgress ? 'Logging out...' : 'Log out',
+          () => _logOut(c),
+          tonal: true,
+        ),
+      ),
     ]);
   });
 }

@@ -196,6 +196,42 @@ void main() {
     );
   });
 
+  testWidgets('custom ingredient units are required, saved, and displayed', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final ai = _FakeFoodAiService();
+    await tester.pumpWidget(MaterialApp(home: ManualMealScreen(aiService: ai)));
+
+    await tester.tap(find.text('Add ingredient'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field('Ingredient name'), 'Oil');
+    await tester.enterText(_field('Amount'), '2');
+    await tester.tap(find.text('g').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Others').last);
+    await tester.pumpAndSettle();
+    expect(_field('Custom unit'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Enter a custom unit of 1–30 characters.'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(_field('Custom unit'), ' tbsp ');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump();
+
+    expect(ai.nutritionInputs.single.single.unit, 'tbsp');
+    expect(find.text('2 tbsp'), findsOneWidget);
+  });
+
   testWidgets('AI failures keep manual entry available with a retry', (
     tester,
   ) async {

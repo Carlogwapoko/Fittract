@@ -287,6 +287,27 @@ test('nutrition endpoint rejects invalid ingredient amounts', async () => {
   assert.equal((await response.json()).error.code, 'invalid-argument');
 });
 
+test('nutrition endpoint accepts and preserves a custom ingredient unit', async () => {
+  const response = await handleRequest(
+    new Request('https://food.example.workers.dev/api/food', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${makeToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'nutrition',
+        ingredients: [{name: 'rice', amount: 2, unit: ' tbsp '}],
+      }),
+    }),
+    env,
+    fakeFetch,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.ingredients[0].unit, 'tbsp');
+});
+
 test('health endpoint and portion conversions are available', async () => {
   const response = await handleRequest(
     new Request('https://food.example.workers.dev/health'),
@@ -295,4 +316,7 @@ test('health endpoint and portion conversions are available', async () => {
   );
   assert.deepEqual(await response.json(), {status: 'ok'});
   assert.equal(amountInGrams({name: 'egg', amount: 2, unit: 'pcs'}), 100);
+  assert.equal(amountInGrams({name: 'rice', amount: 2, unit: 'tbsp'}), 30);
+  assert.equal(amountInGrams({name: 'rice', amount: 2, unit: 'oz'}), 56.699);
+  assert.equal(amountInGrams({name: 'rice', amount: 2, unit: 'kg'}), 2000);
 });

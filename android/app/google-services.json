@@ -20,7 +20,10 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [{ "client_id": "....apps.googleusercontent.com",
+       "client_type": 1,
+       "android_info": { "package_name": "com.example.fittract", "certificate_hash": "..." } },
+     { "client_id": "....apps.googleusercontent.com", "client_type": 3 }]
         }
       }
     }

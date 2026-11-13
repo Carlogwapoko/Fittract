@@ -14,7 +14,9 @@ class FoodImageService {
       throw StateError('Firebase is not initialized.');
     }
     if (FirebaseAuth.instance.currentUser?.uid != uid) {
-      throw StateError('The signed-in account does not match the active account.');
+      throw StateError(
+        'The signed-in account does not match the active account.',
+      );
     }
     if (bytes.isEmpty || bytes.length > 10 * 1024 * 1024) {
       throw StateError('Choose an image smaller than 10 MB.');
@@ -38,11 +40,9 @@ class FoodImageService {
       'heic' => 'image/heic',
       _ => 'image/jpeg',
     };
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child(
-          'users/$uid/foods/${DateTime.now().microsecondsSinceEpoch}.$safeExtension',
-        );
+    final ref = FirebaseStorage.instance.ref().child(
+      'users/$uid/foods/${DateTime.now().microsecondsSinceEpoch}.$safeExtension',
+    );
     await ref.putData(bytes, SettableMetadata(contentType: contentType));
     return ref.getDownloadURL();
   }

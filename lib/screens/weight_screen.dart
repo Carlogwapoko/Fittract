@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ class _WeightState extends State<WeightScreen> {
   int _range = 1;
   bool _dailyDetailsExpanded = false;
   String? _expandedDetailDate;
+  Timer? _goalSaveDebounce;
   late final _startingWeight = TextEditingController();
   late final _manualWeight = TextEditingController();
   late final _targetWeight = TextEditingController(
@@ -44,6 +46,11 @@ class _WeightState extends State<WeightScreen> {
 
   void _refreshPace() {
     if (mounted) setState(() {});
+    _goalSaveDebounce?.cancel();
+    _goalSaveDebounce = Timer(const Duration(milliseconds: 600), () {
+      _goalSaveDebounce = null;
+      _saveValidGoalFields();
+    });
   }
 
   void _refreshFields() {
@@ -52,6 +59,11 @@ class _WeightState extends State<WeightScreen> {
 
   @override
   void dispose() {
+    if (_goalSaveDebounce?.isActive ?? false) {
+      _goalSaveDebounce?.cancel();
+      _goalSaveDebounce = null;
+      _saveValidGoalFields();
+    }
     _startingWeight.dispose();
     _manualWeight.dispose();
     _targetWeight.dispose();
@@ -683,7 +695,7 @@ class _WeightState extends State<WeightScreen> {
                     onPressed: weeklyGoal <= 1
                         ? null
                         : () {
-                            store.goal['wk'] = max(1, weeklyGoal - 1);
+                            store.ensureGoal()['wk'] = max(1, weeklyGoal - 1);
                             store.save();
                           },
                     icon: const Icon(Icons.remove),
@@ -710,7 +722,7 @@ class _WeightState extends State<WeightScreen> {
                     onPressed: weeklyGoal >= 7
                         ? null
                         : () {
-                            store.goal['wk'] = min(7, weeklyGoal + 1);
+                            store.ensureGoal()['wk'] = min(7, weeklyGoal + 1);
                             store.save();
                           },
                     icon: const Icon(Icons.add),
@@ -786,7 +798,7 @@ class _WeightState extends State<WeightScreen> {
     final loss = currentKg - target;
     if (pace == null) {
       return (
-        message: 'Log meals for 14 days to get a reliable pace estimate.',
+        message: 'Log meals on at least 2 different days in the last 14 to see your pace.',
         warning: null,
       );
     }
@@ -889,10 +901,25 @@ class _WeightState extends State<WeightScreen> {
     setState(() => _targetDate.text = isoOf(picked));
   }
 
+  void _saveValidGoalFields() {
+    final target = double.tryParse(_targetWeight.text.trim());
+    final date = _targetDate.text.trim();
+    var changed = false;
+    if (target != null && target.isFinite && target >= 20 && target <= 300) {
+      store.ensureGoal()['w'] = target;
+      changed = true;
+    }
+    if (date.isNotEmpty && DateTime.tryParse(date) != null) {
+      store.ensureGoal()['d'] = date;
+      changed = true;
+    }
+    if (changed) store.save();
+  }
+
   void _startTracking(BuildContext context) {
     final weight = double.tryParse(_startingWeight.text.trim());
     if (weight == null || weight < 20 || weight > 300) return;
-    store.goal['sw'] = weight;
+    store.ensureGoal()['sw'] = weight;
     store.d['weightAnchorDate'] = today();
     final weights = store.d['weights'] as List;
     weights.removeWhere(
@@ -930,8 +957,8 @@ class _WeightState extends State<WeightScreen> {
       snack(context, 'Choose a valid target date.');
       return;
     }
-    store.goal['w'] = target ?? 0.0;
-    store.goal['d'] = date;
+    store.ensureGoal()['w'] = target ?? 0.0;
+    store.ensureGoal()['d'] = date;
     store.save();
     snack(context, 'Goals saved.');
   }

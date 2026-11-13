@@ -323,7 +323,9 @@ final class WorkerFoodAiService implements FoodAiService {
           !amount.isFinite ||
           amount <= 0 ||
           amount > 10000 ||
-          !{'g', 'ml', 'pcs'}.contains(unit)) {
+          unit.trim().isEmpty ||
+          unit.length > 30 ||
+          RegExp(r'[\u0000-\u001F\u007F]').hasMatch(unit)) {
         throw const FormatException(
           'Food service returned an invalid ingredient.',
         );

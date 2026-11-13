@@ -327,11 +327,11 @@ SyncDirection resolveSyncDirection({
   return SyncDirection.pushLocal;
 }
 
-/// True when [snapshot] holds at least one fitness record. Used by the
-/// never-synced rule above: only a snapshot with real data is allowed to
-/// replace an existing cloud document.
+/// True when [snapshot] holds fitness records, customized goals, or session
+/// state. Used by the never-synced rule above to protect local edits.
 @visibleForTesting
 bool hasLocalFitnessData(Map<String, dynamic> snapshot) {
+  final defaults = Store().seed();
   const collections = [
     'routines',
     'sch',
@@ -348,6 +348,40 @@ bool hasLocalFitnessData(Map<String, dynamic> snapshot) {
   }
   if (((snapshot['steps'] as num?) ?? 0) != 0) return true;
   if (snapshot['activeW'] is Map) return true;
+  final goal = snapshot['goal'];
+  if (goal is Map) {
+    final target = goal['w'];
+    final starting = goal['sw'];
+    final date = goal['d'];
+    if ((target is num && target > 0) ||
+        (starting is num && starting > 0) ||
+        (date is String && date.isNotEmpty)) {
+      return true;
+    }
+  }
+  bool differsFromDefaults(Object? value, Object? defaultValue) {
+    if (value is! Map ||
+        defaultValue is! Map ||
+        value.length != defaultValue.length) {
+      return true;
+    }
+    return defaultValue.entries.any((entry) => value[entry.key] != entry.value);
+  }
+
+  if (differsFromDefaults(
+        snapshot['nutritionGoals'],
+        defaults['nutritionGoals'],
+      ) ||
+      differsFromDefaults(
+        snapshot['activityGoals'],
+        defaults['activityGoals'],
+      )) {
+    return true;
+  }
+  if (snapshot['lastWorkout'] != defaults['lastWorkout'] ||
+      snapshot['activeActivity'] != defaults['activeActivity']) {
+    return true;
+  }
   return false;
 }
 
@@ -1575,6 +1609,10 @@ class Store extends ChangeNotifier {
     'log',
     'day',
     'activeW',
+    'activeActivity',
+    'lastWorkout',
+    'weightAnchorDate',
+    'weightEstimateCache',
   ];
 
   /// Wipes the fitness records of the signed-in account while keeping the
@@ -1990,6 +2028,13 @@ class Store extends ChangeNotifier {
   List get hist => d['hist'] is List ? d['hist'] as List : const [];
   int get steps => _safeInt(d['steps'], fallback: 0);
   Map get goal => d['goal'] is Map ? d['goal'] as Map : <String, dynamic>{};
+  Map ensureGoal() {
+    if (d['goal'] is Map) return d['goal'] as Map;
+    final goal = <String, dynamic>{'w': 0.0, 'd': '', 'wk': 3, 'sw': 0.0};
+    d['goal'] = goal;
+    return goal;
+  }
+
   Map<String, dynamic> get nutritionGoals {
     const defaults = <String, dynamic>{
       'calories': 2100,

@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/food_ai_service.dart';
+import '../services/food_image_service.dart';
 import '../services/picked_photo_cleanup.dart';
 import '../store/store.dart';
 import '../widgets/shared_widgets.dart';
@@ -33,7 +34,6 @@ class _MealOption {
   );
 
   Map<String, dynamic> toMeal() => {
-    'd': today(),
     't': type,
     'n': name,
     'desc': description,
@@ -591,7 +591,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                         color: primaryOf(context),
                         size: 28,
                       ),
-                      SizedBox(width: kGapMd),
+                      const SizedBox(width: kGapMd),
                       Expanded(
                         child: Text(
                           'Enter what you ate. Ingredients and nutrition can be filled in automatically.',
@@ -1553,8 +1553,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
 
     setState(() => _saving = true);
 
-    store.meals.add({
-      'd': today(),
+    final meal = <String, dynamic>{
       't': _type,
       'n': name,
       'desc': _description.text.trim(),
@@ -1566,8 +1565,22 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       'p': protein.round(),
       'c': carbs.round(),
       'f': fat.round(),
-    });
+    };
+    store.meals.add(meal);
     store.save();
+    final photo = _foodImageBytes;
+    final uid = store.sessionUid;
+    if (photo != null && store.isCloudLinked && uid != null) {
+      unawaited(
+        _uploadMealPhoto(
+          meal: meal,
+          uid: uid,
+          bytes: photo,
+          fileName: _foodImageName ?? 'meal-scan.jpg',
+          messenger: ScaffoldMessenger.of(context),
+        ),
+      );
+    }
     final cloudSaved = store.isCloudLinked ? await store.syncNow() : null;
     if (!mounted) return;
     setState(() => _saving = false);
@@ -1580,6 +1593,47 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       snack(context, '$name added to today.');
     }
     Navigator.pop(context);
+  }
+
+  Future<void> _uploadMealPhoto({
+    required Map<String, dynamic> meal,
+    required String uid,
+    required Uint8List bytes,
+    required String fileName,
+    required ScaffoldMessengerState messenger,
+  }) async {
+    try {
+      final imageUrl = await FoodImageService().upload(
+        uid: uid,
+        bytes: bytes,
+        fileName: fileName,
+      );
+      if (store.sessionUid != uid) return;
+      meal['imageUrl'] = imageUrl;
+      store.save();
+    } on FirebaseException catch (error) {
+      _showMealPhotoUploadFailure(messenger, error, uid);
+    } on PlatformException catch (error) {
+      _showMealPhotoUploadFailure(messenger, error, uid);
+    } on StateError catch (error) {
+      _showMealPhotoUploadFailure(messenger, error, uid);
+    }
+  }
+
+  void _showMealPhotoUploadFailure(
+    ScaffoldMessengerState messenger,
+    Object error,
+    String uid,
+  ) {
+    if (store.sessionUid != uid) return;
+    debugPrint('Meal photo upload failed: $error');
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Meal saved locally, but its photo could not be uploaded.',
+        ),
+      ),
+    );
   }
 
   double? _parseAmount(String value) {
@@ -1609,21 +1663,30 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
     _amount = TextEditingController(
       text: widget.ingredient?.amount.toString() ?? '',
     );
-    _unit = widget.ingredient?.unit ?? 'g';
+    final ingredientUnit = widget.ingredient?.unit ?? 'g';
+    _unit = {'g', 'ml', 'pcs'}.contains(ingredientUnit)
+        ? ingredientUnit
+        : 'Others';
+    _customUnit = TextEditingController(
+      text: _unit == 'Others' ? ingredientUnit : '',
+    );
   }
 
   late String _unit;
+  late final TextEditingController _customUnit;
   String? _error;
 
   @override
   void dispose() {
     _name.dispose();
     _amount.dispose();
+    _customUnit.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
+    scrollable: true,
     title: Text(
       widget.ingredient == null ? 'Add ingredient' : 'Edit ingredient',
     ),
@@ -1656,11 +1719,25 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
             DropdownMenuItem(value: 'g', child: Text('g')),
             DropdownMenuItem(value: 'ml', child: Text('ml')),
             DropdownMenuItem(value: 'pcs', child: Text('pcs')),
+            DropdownMenuItem(value: 'Others', child: Text('Others')),
           ],
           onChanged: (value) {
             if (value != null) setState(() => _unit = value);
           },
         ),
+        if (_unit == 'Others') ...[
+          const SizedBox(height: kGapMd),
+          TextField(
+            controller: _customUnit,
+            textCapitalization: TextCapitalization.none,
+            maxLength: 30,
+            decoration: const InputDecoration(
+              labelText: 'Custom unit',
+              hintText: 'e.g. tbsp, cup, slice',
+              counterText: '',
+            ),
+          ),
+        ],
         if (_error != null) ...[
           const SizedBox(height: kGapSm),
           Align(
@@ -1697,9 +1774,16 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
             });
             return;
           }
+          final unit = _unit == 'Others' ? _customUnit.text.trim() : _unit;
+          if (unit.isEmpty || unit.length > 30) {
+            setState(() {
+              _error = 'Enter a custom unit of 1–30 characters.';
+            });
+            return;
+          }
           Navigator.pop(
             context,
-            MealIngredient(name: name, amount: amount, unit: _unit),
+            MealIngredient(name: name, amount: amount, unit: unit),
           );
         },
         child: const Text('Save'),

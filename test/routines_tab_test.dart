@@ -74,7 +74,86 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Gentle mobility flow'), findsOneWidget);
     expect(find.text('Create routine'), findsOneWidget);
-    expect(find.text('1 routines'), findsOneWidget);
+    expect(find.text('1 routine'), findsOneWidget);
+  });
+
+  testWidgets('routine card actions and delete confirmation are clear', (
+    tester,
+  ) async {
+    setLargeViewport(tester);
+    await freshStore();
+    store.d['routines'] = [
+      {
+        'id': 42,
+        'name': 'Quick cardio',
+        'type': 'Cardio',
+        'ex': <Map<String, dynamic>>[],
+      },
+    ];
+    await mountRoutines(tester);
+
+    expect(find.text('Your routine'), findsOneWidget);
+    expect(find.text('1 routine'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Start'), findsOneWidget);
+    expect(find.byTooltip('Routine options for Quick cardio'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Routine options for Quick cardio'));
+    await tester.pumpAndSettle();
+    expect(find.text('Start workout'), findsOneWidget);
+    expect(find.text('Edit routine'), findsOneWidget);
+    expect(find.text('Delete routine'), findsOneWidget);
+
+    await tester.tap(find.text('Delete routine'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this routine?'), findsOneWidget);
+    expect(store.routines, hasLength(1));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(store.routines, hasLength(1));
+
+    await tester.tap(find.byTooltip('Routine options for Quick cardio'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete routine'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+    expect(store.routines, isEmpty);
+  });
+
+  testWidgets('the whole routine card opens its editor', (tester) async {
+    setLargeViewport(tester);
+    await freshStore();
+    store.d['routines'] = [
+      {
+        'id': 42,
+        'name': 'Tap to edit',
+        'type': 'Strength',
+        'ex': <Map<String, dynamic>>[],
+      },
+    ];
+    await mountRoutines(tester);
+
+    await tester.tap(find.text('Tap to edit'));
+    await tester.pumpAndSettle();
+    expect(find.byType(EditRoutine), findsOneWidget);
+  });
+
+  testWidgets('My routines search shows its no-match message', (tester) async {
+    setLargeViewport(tester);
+    await freshStore();
+    store.d['routines'] = [
+      {
+        'id': 42,
+        'name': 'Quick cardio',
+        'type': 'Cardio',
+        'ex': <Map<String, dynamic>>[],
+      },
+    ];
+    await mountRoutines(tester);
+
+    await tester.enterText(find.byType(TextField), 'not found');
+    await tester.pumpAndSettle();
+    expect(find.text('No routines match your search.'), findsOneWidget);
   });
 
   testWidgets('routine editor requires a name and asks before discarding', (

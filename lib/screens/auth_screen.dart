@@ -414,56 +414,30 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
       ),
       const SizedBox(width: 8),
       Expanded(
-        child: InkWell(
+        child: Wrap(
           key: const ValueKey('terms-agreement-row'),
-          onTap: () => setState(() => agree = !agree),
-          borderRadius: BorderRadius.circular(8),
-          focusColor: _linkColor(context).withValues(alpha: .22),
-          child: Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 6),
-                child: Text('I agree to the ', style: TextStyle(fontSize: 14)),
-              ),
-              TextButton(
-                key: const ValueKey('terms-agreement-link'),
-                style: _agreementLinkStyle(context),
-                onPressed: () => _openLegalLink(_termsOfServiceUrl),
-                child: const Text('Terms of Service'),
-              ),
-              const Text(' and ', style: TextStyle(fontSize: 14)),
-              TextButton(
-                key: const ValueKey('privacy-agreement-link'),
-                style: _agreementLinkStyle(context),
-                onPressed: () => _openLegalLink(_privacyPolicyUrl),
-                child: const Text('Privacy Policy'),
-              ),
-              const Text('.', style: TextStyle(fontSize: 14)),
-            ],
-          ),
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Text('I agree to the ', style: TextStyle(fontSize: 14)),
+            ),
+            TextButton(
+              key: const ValueKey('terms-agreement-link'),
+              style: _agreementLinkStyle(context),
+              onPressed: () => _openLegalLink(_termsOfServiceUrl),
+              child: const Text('Terms of Service'),
+            ),
+            const Text(' and ', style: TextStyle(fontSize: 14)),
+            TextButton(
+              key: const ValueKey('privacy-agreement-link'),
+              style: _agreementLinkStyle(context),
+              onPressed: () => _openLegalLink(_privacyPolicyUrl),
+              child: const Text('Privacy Policy'),
+            ),
+            const Text('.', style: TextStyle(fontSize: 14)),
+          ],
         ),
-      ),
-    ],
-  );
-
-  Widget _policyLinks(BuildContext context) => Wrap(
-    alignment: WrapAlignment.center,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: [
-      TextButton(
-        style: _linkStyle(context),
-        onPressed: () => _openLegalLink(_termsOfServiceUrl),
-        child: const Text('Terms of Service'),
-      ),
-      Text(
-        '·',
-        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
-      TextButton(
-        style: _linkStyle(context),
-        onPressed: () => _openLegalLink(_privacyPolicyUrl),
-        child: const Text('Privacy Policy'),
       ),
     ],
   );
@@ -671,94 +645,92 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                           : Text(reg ? 'Create account' : 'Log in'),
                     ),
                   ),
-                  const SizedBox(height: kGapMd),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Divider(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          'or',
-                          style: TextStyle(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                  if (!reg) ...[
+                    const SizedBox(height: kGapMd),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Divider(
+                            color: Theme.of(context).colorScheme.outlineVariant,
                           ),
                         ),
-                      ),
-                      Expanded(
-                        child: Divider(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: kGapMd),
-                  SizedBox(
-                    height: 52,
-                    child: OutlinedButton(
-                      onPressed: googleBusy || (reg && !agree)
-                          ? null
-                          : signInWithGoogle,
-                      style: ButtonStyle(
-                        backgroundColor: WidgetStatePropertyAll(
-                          Theme.of(context).colorScheme.surface,
-                        ),
-                        foregroundColor: WidgetStatePropertyAll(
-                          Theme.of(context).colorScheme.onSurface,
-                        ),
-                        side: WidgetStateProperty.resolveWith(
-                          (states) => BorderSide(
-                            color: states.contains(WidgetState.focused)
-                                ? primaryOf(context)
-                                : Theme.of(context).colorScheme.outline,
-                            width: states.contains(WidgetState.focused)
-                                ? appTokensOf(context).focusedInputBorderWidth
-                                : appTokensOf(context).inputBorderWidth,
-                          ),
-                        ),
-                        shape: WidgetStatePropertyAll(
-                          RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                      ),
-                      child: googleBusy
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SvgPicture.asset(
-                                  'assets/images/google_g.svg',
-                                  width: 20,
-                                  height: 20,
-                                  semanticsLabel: 'Google',
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  reg
-                                      ? 'Sign up with Google'
-                                      : 'Continue with Google',
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'or',
+                            style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                             ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Divider(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+                    const SizedBox(height: kGapMd),
+                    SizedBox(
+                      height: 52,
+                      child: OutlinedButton(
+                        onPressed: googleBusy ? null : signInWithGoogle,
+                        style: ButtonStyle(
+                          backgroundColor: WidgetStatePropertyAll(
+                            Theme.of(context).colorScheme.surface,
+                          ),
+                          foregroundColor: WidgetStatePropertyAll(
+                            Theme.of(context).colorScheme.onSurface,
+                          ),
+                          side: WidgetStateProperty.resolveWith(
+                            (states) => BorderSide(
+                              color: states.contains(WidgetState.focused)
+                                  ? primaryOf(context)
+                                  : Theme.of(context).colorScheme.outline,
+                              width: states.contains(WidgetState.focused)
+                                  ? appTokensOf(context).focusedInputBorderWidth
+                                  : appTokensOf(context).inputBorderWidth,
+                            ),
+                          ),
+                          shape: WidgetStatePropertyAll(
+                            RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                        ),
+                        child: googleBusy
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SvgPicture.asset(
+                                    'assets/images/google_g.svg',
+                                    width: 20,
+                                    height: 20,
+                                    semanticsLabel: 'Google',
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Text(
+                                    'Continue with Google',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ],
                   const Spacer(),
-                  const SizedBox(height: kGapLg),
-                  _policyLinks(context),
                   Center(
                     child: TextButton(
                       style: _linkStyle(context),

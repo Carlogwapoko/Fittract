@@ -40,10 +40,12 @@ void main() {
 
       store.applyRetention();
 
-      expect(
-        (store.d['water'] as List).map((w) => w['d']),
-        [daysAgo(0), daysAgo(30), daysAgo(89), daysAgo(90)],
-      );
+      expect((store.d['water'] as List).map((w) => w['d']), [
+        daysAgo(0),
+        daysAgo(30),
+        daysAgo(89),
+        daysAgo(90),
+      ]);
     });
 
     test('removes entries strictly older than the window', () async {
@@ -57,27 +59,27 @@ void main() {
 
       store.applyRetention();
 
-      expect(
-        (store.d['water'] as List).map((w) => w['d']),
-        [daysAgo(90)],
-      );
+      expect((store.d['water'] as List).map((w) => w['d']), [daysAgo(90)]);
     });
 
-    test('keeps malformed and non-map entries that cannot be proven old', () async {
-      await freshStore();
-      final entries = <dynamic>[
-        {'d': ''},
-        {'d': null},
-        {'ml': 500}, // no 'd' key at all
-        {'d': 'not-a-date'},
-        'not-a-map',
-      ];
-      store.d['water'] = [...entries];
+    test(
+      'keeps malformed and non-map entries that cannot be proven old',
+      () async {
+        await freshStore();
+        final entries = <dynamic>[
+          {'d': ''},
+          {'d': null},
+          {'ml': 500}, // no 'd' key at all
+          {'d': 'not-a-date'},
+          'not-a-map',
+        ];
+        store.d['water'] = [...entries];
 
-      store.applyRetention();
+        store.applyRetention();
 
-      expect(store.d['water'], entries);
-    });
+        expect(store.d['water'], entries);
+      },
+    );
   });
 
   group('hist — date-based 365-day window', () {
@@ -93,28 +95,32 @@ void main() {
 
       store.applyRetention();
 
-      expect(
-        (store.d['hist'] as List).map((h) => h['n']),
-        ['newest', 'inside', 'boundary'],
-      );
+      expect((store.d['hist'] as List).map((h) => h['n']), [
+        'newest',
+        'inside',
+        'boundary',
+      ]);
     });
   });
 
   group('log — position-based 365-entry cap', () {
-    test('a full-length list keeps its last 365 entries regardless of dates', () async {
-      await freshStore();
-      store.d['log'] = [
-        for (var i = 0; i < 366; i++) {'d': 'entry-$i'},
-      ];
+    test(
+      'a full-length list keeps its last 365 entries regardless of dates',
+      () async {
+        await freshStore();
+        store.d['log'] = [
+          for (var i = 0; i < 366; i++) {'d': 'entry-$i'},
+        ];
 
-      store.applyRetention();
+        store.applyRetention();
 
-      final log = store.d['log'] as List;
-      expect(log.length, 365);
-      // The oldest position is dropped; the newest 365 survive in order.
-      expect(log.first['d'], 'entry-1');
-      expect(log.last['d'], 'entry-365');
-    });
+        final log = store.d['log'] as List;
+        expect(log.length, 365);
+        // The oldest position is dropped; the newest 365 survive in order.
+        expect(log.first['d'], 'entry-1');
+        expect(log.last['d'], 'entry-365');
+      },
+    );
 
     test('a list of 365 or fewer is never touched, even if ancient', () async {
       await freshStore();

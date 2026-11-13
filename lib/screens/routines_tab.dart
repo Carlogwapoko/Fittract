@@ -194,7 +194,7 @@ class _RoutinesState extends State<RoutinesTab> {
             child: FilledButton.icon(
               onPressed: () => createRoutine(context),
               icon: const Icon(Icons.add),
-              label: const Text('Create a routine'),
+              label: const Text('Create routine'),
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
                 backgroundColor: primaryOf(context),
@@ -229,7 +229,7 @@ class _RoutinesState extends State<RoutinesTab> {
     if (routines.isEmpty) {
       return Center(
         child: Text(
-          'No routines match.',
+          'No routines match your search.',
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
@@ -237,12 +237,12 @@ class _RoutinesState extends State<RoutinesTab> {
       );
     }
     return ListView(
-      padding: const EdgeInsets.fromLTRB(kGapLg, kGapSm, kGapLg, 100),
+      padding: const EdgeInsets.fromLTRB(kGapLg, kGapSm, kGapLg, 96),
       children: [
         h3(
-          'Made for your week',
+          totalCount == 1 ? 'Your routine' : 'Made for your week',
           trailing: Text(
-            '$totalCount routines',
+            '$totalCount routine${totalCount == 1 ? '' : 's'}',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
               fontSize: 14,
@@ -258,56 +258,130 @@ class _RoutinesState extends State<RoutinesTab> {
   Widget _myRoutineCard(BuildContext context, Map routine) {
     final exs = routine['ex'] is List ? routine['ex'] as List : const [];
     final name = (routine['name'] ?? 'Untitled routine').toString();
+    final type = (routine['type'] ?? 'Strength').toString();
+    Widget metadata(IconData icon, String label) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          icon,
+          size: 16,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+        const SizedBox(width: kGapXs),
+        Text(label),
+      ],
+    );
+
     return card(
+      onTap: () => go(context, EditRoutine(routine)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+          ),
+          const SizedBox(height: kGapSm),
+          DefaultTextStyle(
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 13,
+            ),
+            child: Wrap(
+              spacing: kGapMd,
+              runSpacing: kGapXs,
+              children: [
+                metadata(Icons.category_outlined, type),
+                metadata(
+                  Icons.fitness_center_outlined,
+                  '${exs.length} ${exs.length == 1 ? 'exercise' : 'exercises'}',
+                ),
+                metadata(
+                  Icons.schedule_outlined,
+                  '~${routineMinutes(exs)} min',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: kGapMd),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                      ),
-                    ),
-                    const SizedBox(height: kGapSm),
-                    Text(
-                      '${routine['type'] ?? 'Strength'} · ${exs.length} exercises · ~${routineMinutes(exs)} min',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
+              FilledButton.icon(
+                onPressed: () => go(context, WorkoutScreen(routine)),
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Start'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                  backgroundColor: primaryOf(context),
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 ),
               ),
               const SizedBox(width: kGapSm),
-              _outlinedPillButton(
-                context,
-                label: 'Edit',
-                icon: Icons.edit_outlined,
-                onPressed: () => go(context, EditRoutine(routine)),
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'Routine options',
-                icon: const Icon(Icons.more_vert),
-                onSelected: (value) {
-                  if (value == 'start') {
-                    go(context, WorkoutScreen(routine));
-                  } else {
-                    _deleteRoutine(context, routine);
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'start', child: Text('Start workout')),
-                  PopupMenuItem(value: 'delete', child: Text('Delete routine')),
-                ],
+              Semantics(
+                label: 'More options for $name',
+                button: true,
+                child: SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: PopupMenuButton<String>(
+                    tooltip: 'Routine options for $name',
+                    padding: EdgeInsets.zero,
+                    position: PopupMenuPosition.under,
+                    offset: const Offset(0, kGapXs),
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (value) {
+                      if (value == 'start') {
+                        go(context, WorkoutScreen(routine));
+                      } else if (value == 'edit') {
+                        go(context, EditRoutine(routine));
+                      } else if (value == 'delete') {
+                        _deleteRoutine(context, routine);
+                      }
+                    },
+                    itemBuilder: (menuContext) {
+                      final error = Theme.of(menuContext).colorScheme.error;
+                      return [
+                        const PopupMenuItem(
+                          value: 'start',
+                          child: Row(
+                            children: [
+                              Icon(Icons.play_arrow),
+                              SizedBox(width: kGapMd),
+                              Text('Start workout'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit),
+                              SizedBox(width: kGapMd),
+                              Text('Edit routine'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete_outline, color: error),
+                              const SizedBox(width: kGapMd),
+                              Text(
+                                'Delete routine',
+                                style: TextStyle(color: error),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ];
+                    },
+                  ),
+                ),
               ),
             ],
           ),
@@ -317,8 +391,29 @@ class _RoutinesState extends State<RoutinesTab> {
   }
 
   Future<void> _deleteRoutine(BuildContext context, Map routine) async {
-    if (!await confirm(context, 'Delete routine?', 'Delete') ||
-        !context.mounted) {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this routine?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(64, 48),
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) {
       return;
     }
     store.routines.removeWhere((value) => value['id'] == routine['id']);
@@ -372,7 +467,9 @@ class _RoutinesState extends State<RoutinesTab> {
         child: routines.isEmpty
             ? Center(
                 child: Text(
-                  'No routines match.',
+                  q.trim().isEmpty
+                      ? 'No routines match.'
+                      : 'No routines match your search.',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -384,7 +481,7 @@ class _RoutinesState extends State<RoutinesTab> {
                   h3(
                     'Popular this week',
                     trailing: Text(
-                      '${routines.length} routines',
+                      '${routines.length} routine${routines.length == 1 ? '' : 's'}',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurface,
                         fontSize: 14,
@@ -537,7 +634,7 @@ class _RoutineSegments extends StatelessWidget {
         if (index > 0) const SizedBox(width: kGapSm),
         Expanded(
           child: SizedBox(
-            height: 44,
+            height: 48,
             child: OutlinedButton(
               onPressed: () => onSelected(index),
               style: OutlinedButton.styleFrom(

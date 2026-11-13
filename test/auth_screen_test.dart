@@ -332,8 +332,8 @@ void main() {
     );
     expect(find.text('Continue with Google'), findsOneWidget);
     expect(find.text('or'), findsOneWidget);
-    expect(find.text('Terms of Service'), findsOneWidget);
-    expect(find.text('Privacy Policy'), findsOneWidget);
+    expect(find.text('Terms of Service'), findsNothing);
+    expect(find.text('Privacy Policy'), findsNothing);
 
     final forgot = tester.widget<TextButton>(
       find.ancestor(
@@ -355,9 +355,9 @@ void main() {
       find.widgetWithText(FilledButton, 'Create account'),
     );
     expect(createButton.onPressed, isNull);
-    expect(find.text('Sign up with Google'), findsOneWidget);
-    expect(find.text('Terms of Service'), findsWidgets);
-    expect(find.text('Privacy Policy'), findsWidgets);
+    expect(find.text('Continue with Google'), findsNothing);
+    expect(find.text('Terms of Service'), findsOneWidget);
+    expect(find.text('Privacy Policy'), findsOneWidget);
     for (final key in [
       const ValueKey('terms-agreement-link'),
       const ValueKey('privacy-agreement-link'),
@@ -378,6 +378,14 @@ void main() {
       tester
           .widget<Checkbox>(find.byKey(const ValueKey('terms-checkbox')))
           .value,
+      isFalse,
+    );
+    await tester.tap(find.byKey(const ValueKey('terms-checkbox')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<Checkbox>(find.byKey(const ValueKey('terms-checkbox')))
+          .value,
       isTrue,
     );
     expect(
@@ -387,6 +395,14 @@ void main() {
           )
           .onPressed,
       isNotNull,
+    );
+    await tester.tap(find.byKey(const ValueKey('terms-checkbox')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<Checkbox>(find.byKey(const ValueKey('terms-checkbox')))
+          .value,
+      isFalse,
     );
     expect(tester.takeException(), isNull);
   });
@@ -468,72 +484,55 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Returning from cancelled Google auth clears busy for login and sign up',
-    (WidgetTester tester) async {
-      SharedPreferences.setMockInitialValues({});
-      await store.init();
+  testWidgets('Google sign-in remains available only on login', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
 
-      final pendingSignIns = <Completer<UserCredential>>[];
-      GoogleAuthService.debugSignInOverride = () {
-        final pending = Completer<UserCredential>();
-        pendingSignIns.add(pending);
-        return pending.future;
-      };
-      addTearDown(GoogleAuthService.resetGoogleSignInInitializationForTesting);
+    final pendingSignIns = <Completer<UserCredential>>[];
+    GoogleAuthService.debugSignInOverride = () {
+      final pending = Completer<UserCredential>();
+      pendingSignIns.add(pending);
+      return pending.future;
+    };
+    addTearDown(GoogleAuthService.resetGoogleSignInInitializationForTesting);
 
-      Future<void> cancelExternalAuth() async {
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.inactive,
-        );
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.inactive,
-        );
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
-        await tester.pump();
-      }
-
-      await tester.pumpWidget(const App());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Continue with Google'));
+    Future<void> cancelExternalAuth() async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      await cancelExternalAuth();
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.text('Continue with Google'), findsOneWidget);
-      pendingSignIns.last.completeError(
-        const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
-      );
-      await tester.pumpAndSettle();
+    }
 
-      await tester.ensureVisible(find.text('New here? Create an account'));
-      await tester.tap(find.text('New here? Create an account'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terms-checkbox')));
-      await tester.pump();
-      await tester.ensureVisible(find.text('Sign up with Google'));
-      await tester.tap(find.text('Sign up with Google'));
-      await tester.pump();
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      await cancelExternalAuth();
-      pendingSignIns.last.completeError(
-        const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(const App());
+    await tester.pumpAndSettle();
 
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.text('Sign up with Google'), findsOneWidget);
-      expect(pendingSignIns, hasLength(2));
-      expect(store.hasActiveSession, isFalse);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(find.text('Continue with Google'), findsOneWidget);
+    await tester.tap(find.text('Continue with Google'));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await cancelExternalAuth();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    pendingSignIns.last.completeError(
+      const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('New here? Create an account'));
+    await tester.tap(find.text('New here? Create an account'));
+    await tester.pumpAndSettle();
+    expect(find.text('Continue with Google'), findsNothing);
+    expect(find.text('Sign up with Google'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(pendingSignIns, hasLength(1));
+    expect(store.hasActiveSession, isFalse);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'An unexpected Google sign-in failure shows a safe message and clears busy',

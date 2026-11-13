@@ -260,19 +260,21 @@ function validateIngredients(value) {
   return value.map((item) => {
     const name = typeof item?.name === 'string' ? item.name.trim() : '';
     const amount = Number(item?.amount);
-    const unit = item?.unit;
+    const unit = typeof item?.unit === 'string' ? item.unit.trim() : '';
     if (
       !name ||
       name.length > 80 ||
       !Number.isFinite(amount) ||
       amount <= 0 ||
       amount > 10000 ||
-      !VALID_UNITS.has(unit)
+      !unit ||
+      unit.length > 30 ||
+      /[\u0000-\u001F\u007F]/.test(unit)
     ) {
       throw new ApiError(
         400,
         'invalid-argument',
-        'Each ingredient needs a name, positive amount, and g, ml, or pcs unit.',
+        'Each ingredient needs a name, positive amount, and a valid unit.',
       );
     }
     return {name, amount, unit};
@@ -648,7 +650,22 @@ async function fetchWithTimeout(fetchImpl, input, init, timeoutMs) {
 }
 
 export function amountInGrams(ingredient) {
-  if (ingredient.unit === 'g' || ingredient.unit === 'ml') return ingredient.amount;
+  const unit = ingredient.unit.trim().toLowerCase();
+  if (unit === 'g') return ingredient.amount;
+  if (unit === 'ml') return ingredient.amount;
+  if (['kg', 'kilogram', 'kilograms'].includes(unit)) {
+    return ingredient.amount * 1000;
+  }
+  if (['oz', 'ounce', 'ounces'].includes(unit)) {
+    return ingredient.amount * 28.3495;
+  }
+  if (['tsp', 'teaspoon', 'teaspoons'].includes(unit)) {
+    return ingredient.amount * 5;
+  }
+  if (['tbsp', 'tablespoon', 'tablespoons'].includes(unit)) {
+    return ingredient.amount * 15;
+  }
+  if (['cup', 'cups'].includes(unit)) return ingredient.amount * 240;
   const name = ingredient.name.toLowerCase();
   const weights = [
     [/egg/, 50],

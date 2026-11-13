@@ -9,9 +9,7 @@ void main() {
     test('cancellation maps to an empty message (silent outcome)', () {
       expect(
         googleAuthErrorMessage(
-          const GoogleSignInException(
-            code: GoogleSignInExceptionCode.canceled,
-          ),
+          const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
         ),
         '',
       );
@@ -51,10 +49,7 @@ void main() {
       ]) {
         expect(
           googleAuthErrorMessage(
-            GoogleSignInException(
-              code: code,
-              description: 'details for $code',
-            ),
+            GoogleSignInException(code: code, description: 'details for $code'),
           ),
           'details for $code',
           reason: 'code $code should surface its description',
@@ -101,7 +96,8 @@ void main() {
         googleAuthErrorMessage(
           FirebaseAuthException(
             code: 'missing-google-id-token',
-            message: 'Google did not return an ID token. Check the Firebase '
+            message:
+                'Google did not return an ID token. Check the Firebase '
                 'Android app and Web client configuration.',
           ),
         ),
@@ -130,9 +126,7 @@ void main() {
         'raw upstream detail',
       );
       expect(
-        googleAuthErrorMessage(
-          FirebaseAuthException(code: 'internal-error'),
-        ),
+        googleAuthErrorMessage(FirebaseAuthException(code: 'internal-error')),
         'Google sign-in failed. Please try again.',
       );
     });
@@ -159,24 +153,27 @@ void main() {
       }
     });
 
-    test('unmapped core codes surface their message, else a generic fallback', () {
-      expect(
-        googleAuthErrorMessage(
-          FirebaseException(
-            plugin: 'firebase_core',
-            code: 'network-request-failed',
-            message: 'upstream is down',
+    test(
+      'unmapped core codes surface their message, else a generic fallback',
+      () {
+        expect(
+          googleAuthErrorMessage(
+            FirebaseException(
+              plugin: 'firebase_core',
+              code: 'network-request-failed',
+              message: 'upstream is down',
+            ),
           ),
-        ),
-        'upstream is down',
-      );
-      expect(
-        googleAuthErrorMessage(
-          FirebaseException(plugin: 'firebase_core', code: 'unknown-code'),
-        ),
-        'Could not connect to Firebase. Please try again.',
-      );
-    });
+          'upstream is down',
+        );
+        expect(
+          googleAuthErrorMessage(
+            FirebaseException(plugin: 'firebase_core', code: 'unknown-code'),
+          ),
+          'Could not connect to Firebase. Please try again.',
+        );
+      },
+    );
   });
 
   group('googleAuthErrorMessage — fallbacks', () {

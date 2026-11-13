@@ -391,6 +391,32 @@ void main() {
       final workout = Store().seed()..['activeW'] = {'rid': 'r1'};
       expect(hasLocalFitnessData(workout), isTrue);
     });
+
+    test('goals and activity state count as local fitness data', () {
+      for (final goal in [
+        {'w': 70.0, 'sw': 0.0, 'd': '', 'wk': 3},
+        {'w': 0.0, 'sw': 80.0, 'd': '', 'wk': 3},
+        {'w': 0.0, 'sw': 0.0, 'd': '2026-12-01', 'wk': 3},
+      ]) {
+        final snapshot = Store().seed()..['goal'] = goal;
+        expect(hasLocalFitnessData(snapshot), isTrue);
+      }
+
+      final nutrition = Store().seed();
+      (nutrition['nutritionGoals'] as Map)['protein'] = 155;
+      expect(hasLocalFitnessData(nutrition), isTrue);
+
+      final activity = Store().seed();
+      (activity['activityGoals'] as Map)['steps'] = 9000;
+      expect(hasLocalFitnessData(activity), isTrue);
+
+      final lastWorkout = Store().seed()..['lastWorkout'] = {'rid': 'r1'};
+      expect(hasLocalFitnessData(lastWorkout), isTrue);
+
+      final activeActivity = Store().seed()
+        ..['activeActivity'] = {'type': 'run'};
+      expect(hasLocalFitnessData(activeActivity), isTrue);
+    });
   });
 
   group('sync cycles', () {
@@ -952,8 +978,13 @@ void main() {
         s.d['hist'] = [
           {'d': today(), 'n': 'Push day', 'min': 30, 'ex': 3},
         ];
+        s.d['activeActivity'] = {'type': 'run'};
+        s.d['lastWorkout'] = {'rid': 42};
+        s.d['weightAnchorDate'] = today();
         s.save();
         expect(await s.syncNow(), isTrue);
+        final oldEstimateSignature =
+            (s.d['weightEstimateCache'] as Map)['signature'];
 
         s.resetCurrentAccountData();
         expect(await s.syncNow(), isTrue);
@@ -962,6 +993,14 @@ void main() {
         expect(s.steps, 0);
         expect(s.hist, isEmpty);
         expect(s.routines, isEmpty);
+        expect(s.d.containsKey('activeActivity'), isFalse);
+        expect(s.d.containsKey('lastWorkout'), isFalse);
+        expect(s.d.containsKey('weightAnchorDate'), isFalse);
+        // Saving recalculates the cache, but it must not reuse the stale one.
+        expect(
+          (s.d['weightEstimateCache'] as Map)['signature'],
+          isNot(oldEstimateSignature),
+        );
         expect(s.d['name'], 'Ada Lovelace');
         expect(s.d['age'], 34);
         expect(s.goal['w'], 72.0);
@@ -972,6 +1011,13 @@ void main() {
         expect(cloud['steps'], 0);
         expect(cloud['hist'], isEmpty);
         expect(cloud['routines'], isEmpty);
+        expect(cloud.containsKey('activeActivity'), isFalse);
+        expect(cloud.containsKey('lastWorkout'), isFalse);
+        expect(cloud.containsKey('weightAnchorDate'), isFalse);
+        expect(
+          (cloud['weightEstimateCache'] as Map)['signature'],
+          isNot(oldEstimateSignature),
+        );
         expect(cloud['name'], 'Ada Lovelace');
         expect(cloud['age'], 34);
         expect(cloud['goal']['w'], 72.0);

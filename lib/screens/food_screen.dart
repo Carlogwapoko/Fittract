@@ -211,7 +211,9 @@ class FoodScreen extends StatelessWidget {
           mealPicture(
             context,
             image:
-                meal['img'] ?? mealImageAssetFor((meal['n'] ?? '').toString()),
+                meal['imageUrl'] ??
+                meal['img'] ??
+                mealImageAssetFor((meal['n'] ?? '').toString()),
             name: meal['n'],
             type: meal['t'],
             size: 42,
