@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 
@@ -10,6 +11,22 @@ class WeightEstimateDay {
   final bool manuallyWeighed;
   final int? caloriesConsumed;
   final int caloriesBurned;
+  final int stepCalories;
+
+  /// Estimated resting (BMR) burn for the day. Not counted as exercise.
+  final int restingCalories;
+  final int activityCalories;
+
+  int get totalBurnedCalories =>
+      restingCalories + activityCalories + stepCalories + caloriesBurned;
+
+  int get activeCaloriesBurned => caloriesBurned + stepCalories;
+
+  int? get calorieBalance =>
+      caloriesConsumed == null ? null : caloriesConsumed! - totalBurnedCalories;
+
+  /// How much the estimate moved on this day (kg, negative = lost).
+  final double weightChangeKg;
   final List<Map<String, dynamic>> meals;
   final List<Map<String, dynamic>> activities;
   final List<Map<String, dynamic>> workouts;
@@ -22,12 +39,19 @@ class WeightEstimateDay {
     this.manuallyWeighed = false,
     this.caloriesConsumed = 0,
     this.caloriesBurned = 0,
+    this.stepCalories = 0,
+    this.restingCalories = 0,
+    this.activityCalories = 0,
+    this.weightChangeKg = 0,
     this.meals = const [],
     this.activities = const [],
     this.workouts = const [],
   });
 
   bool get hasMeals => meals.isNotEmpty;
+
+  bool get contributesToTrend =>
+      complete || manuallyWeighed || activeCaloriesBurned > 0;
 
   String get dateKey => WeightEstimator._dateKey(date);
 
@@ -39,6 +63,10 @@ class WeightEstimateDay {
     'manuallyWeighed': manuallyWeighed,
     'caloriesConsumed': caloriesConsumed,
     'caloriesBurned': caloriesBurned,
+    'stepCalories': stepCalories,
+    'restingCalories': restingCalories,
+    'activityCalories': activityCalories,
+    'weightChangeKg': weightChangeKg,
     'meals': meals,
     'activities': activities,
     'workouts': workouts,
@@ -57,6 +85,10 @@ class WeightEstimateDay {
       manuallyWeighed: value['manuallyWeighed'] == true,
       caloriesConsumed: WeightEstimator._optionalInt(value['caloriesConsumed']),
       caloriesBurned: WeightEstimator._int(value['caloriesBurned']),
+      stepCalories: WeightEstimator._int(value['stepCalories']),
+      restingCalories: WeightEstimator._int(value['restingCalories']),
+      activityCalories: WeightEstimator._int(value['activityCalories']),
+      weightChangeKg: WeightEstimator._number(value['weightChangeKg']),
       meals: WeightEstimator._records(value['meals']),
       activities: WeightEstimator._records(value['activities']),
       workouts: WeightEstimator._records(value['workouts']),
@@ -80,6 +112,68 @@ class WeightEstimateSeries {
 
 class WeightEstimator {
   static const kcalPerKg = 7700.0;
+
+  static bool hasEnoughTrendDays(Iterable<WeightEstimateDay> days) =>
+      days.where((day) => day.contributesToTrend).length >= 2;
+
+  static int activeCaloriesFromMet({
+    required double weightKg,
+    required int durationSeconds,
+    required double met,
+  }) {
+    if (!weightKg.isFinite ||
+        !met.isFinite ||
+        weightKg <= 0 ||
+        durationSeconds <= 0 ||
+        met <= 1) {
+      return 0;
+    }
+    return ((met - 1) * 3.5 * weightKg * durationSeconds / 12000).round();
+  }
+
+  static int stepCaloriesFor({
+    required int steps,
+    required double weightKg,
+    required double heightCm,
+  }) {
+    if (steps <= 0 ||
+        !weightKg.isFinite ||
+        weightKg < 20 ||
+        weightKg > 300 ||
+        !heightCm.isFinite ||
+        heightCm < 100 ||
+        heightCm > 250) {
+      return 0;
+    }
+    return _stepCalories(steps, weightKg, heightCm);
+  }
+
+  static int loggedExerciseCaloriesForDate(
+    Map<String, dynamic> data,
+    DateTime date,
+  ) {
+    final key = _dateKey(date);
+    final activitiesByDate = <String, List<Map<String, dynamic>>>{};
+    final workoutsByDate = <String, List<Map<String, dynamic>>>{};
+    final archived = data['log'];
+    if (archived is List) {
+      for (final entry in archived.whereType<Map>()) {
+        final archivedDate = _parseDate(entry['d']);
+        if (archivedDate == null || _dateKey(archivedDate) != key) {
+          continue;
+        }
+        _addDatedRecords(activitiesByDate, entry['act'], entry['d']);
+      }
+    }
+
+    final currentDataDate = _parseDate(data['day']) ?? DateTime.now();
+    _addDatedRecords(activitiesByDate, data['act'], currentDataDate);
+    _addDatedRecords(workoutsByDate, data['hist'], null);
+    return _exerciseCalories(
+      activitiesByDate[key] ?? const <Map<String, dynamic>>[],
+      workoutsByDate[key] ?? const <Map<String, dynamic>>[],
+    );
+  }
 
   static WeightEstimateSeries calculate(Map<String, dynamic> data) {
     final signature = _signature(data);
@@ -125,11 +219,14 @@ class WeightEstimator {
     final mealsByDate = <String, List<Map<String, dynamic>>>{};
     final activitiesByDate = <String, List<Map<String, dynamic>>>{};
     final workoutsByDate = <String, List<Map<String, dynamic>>>{};
+    final stepsByDate = <String, int>{};
     final archived = data['log'];
     if (archived is List) {
       for (final entry in archived.whereType<Map>()) {
         _addDatedRecords(mealsByDate, entry['meals'], entry['d']);
         _addDatedRecords(activitiesByDate, entry['act'], entry['d']);
+        final date = _parseDate(entry['d']);
+        if (date != null) stepsByDate[_dateKey(date)] = _int(entry['steps']);
       }
     }
 
@@ -138,9 +235,11 @@ class WeightEstimator {
     _addDatedRecords(mealsByDate, data['meals'], currentDataDate);
     _addDatedRecords(activitiesByDate, data['act'], currentDataDate);
     _addDatedRecords(workoutsByDate, data['hist'], null);
+    stepsByDate[_dateKey(currentDataDate)] = _int(data['steps']);
     mealsByDate.putIfAbsent(todayKey, () => []);
     activitiesByDate.putIfAbsent(todayKey, () => []);
     workoutsByDate.putIfAbsent(todayKey, () => []);
+    stepsByDate.putIfAbsent(todayKey, () => 0);
 
     final manualWeightsByDate = <String, double>{};
     final rawWeights = data['weights'];
@@ -179,17 +278,69 @@ class WeightEstimator {
         0,
         (total, meal) => total + _int(meal['k']),
       );
+      final weightBefore = weight;
       final bmr = 10 * weight + 6.25 * height - 5 * age + sexAdjustment;
-      final burned = [
-        ...activities,
-        ...workouts,
-      ].fold<int>(0, (total, exercise) => total + _int(exercise['kc']));
-      if (!isAnchor && hasMeals) {
-        weight += (eaten - (bmr + burned)) / kcalPerKg;
+      final burned = _exerciseCalories(activities, workouts);
+      final activityLevel = data['activityLevel'];
+      final activityFactor = switch (activityLevel) {
+        'sedentary' => 1.2,
+        'light' => 1.375,
+        'moderate' => 1.55,
+        'active' => 1.725,
+        'very_active' => 1.9,
+        _ => 1.375,
+      };
+      final resting = bmr.round();
+      final stepCount = stepsByDate[key] ?? 0;
+      final loggedActivitySteps = activities.fold<int>(
+        0,
+        (total, activity) => total + _int(activity['st']),
+      );
+      final unpairedSteps = math.max(0, stepCount - loggedActivitySteps);
+      final stepCalories = _stepCalories(unpairedSteps, weight, height);
+      final baselineSteps = switch (activityLevel) {
+        'sedentary' => 3000,
+        'light' => 5000,
+        'moderate' => 7500,
+        'active' => 10000,
+        'very_active' => 12000,
+        _ => 5000,
+      };
+      final baselineStepCalories = _stepCalories(
+        math.min(baselineSteps, unpairedSteps),
+        weight,
+        height,
+      );
+      final activityCalories = math.max(
+        0,
+        (bmr * activityFactor - bmr - baselineStepCalories).round(),
+      );
+      final dailyMaintenance = resting + activityCalories;
+      final extraStepCalories = math.max(
+        0,
+        stepCalories - baselineStepCalories,
+      );
+      final manualWeight = manualWeightsByDate[key];
+      if (isAnchor || manualWeight != null) {
+        // Weigh-in day: the weighed value is the starting point. Exercise
+        // logged on the same day still counts (it is assumed to happen after
+        // the weigh-in), so finishing a routine lowers the estimate right away.
+        weight =
+            (manualWeight ?? weight) - (burned + extraStepCalories) / kcalPerKg;
+        weight = weight.clamp(20, 300);
+      } else if (hasMeals) {
+        // Logged meals: calories eaten minus BMR, normal activity, and exercise.
+        weight +=
+            (eaten - (dailyMaintenance + burned + stepCalories)) / kcalPerKg;
+        weight = weight.clamp(20, 300);
+      } else if (burned > 0 || extraStepCalories > 0) {
+        // No meals logged yet, but there was exercise (for example a finished
+        // routine). Assume normal eating (intake equal to resting burn) so the
+        // exercise burn still lowers the estimate. Logging meals replaces this
+        // assumption with the real numbers.
+        weight -= (burned + extraStepCalories) / kcalPerKg;
         weight = weight.clamp(20, 300);
       }
-      final manualWeight = manualWeightsByDate[key];
-      if (manualWeight != null) weight = manualWeight;
       days.add(
         WeightEstimateDay(
           date: date,
@@ -199,6 +350,10 @@ class WeightEstimator {
           manuallyWeighed: manualWeight != null,
           caloriesConsumed: hasMeals ? eaten : null,
           caloriesBurned: burned,
+          stepCalories: stepCalories,
+          restingCalories: resting,
+          activityCalories: activityCalories,
+          weightChangeKg: weight - weightBefore,
           meals: meals,
           activities: activities,
           workouts: workouts,
@@ -213,6 +368,51 @@ class WeightEstimator {
       anchorWeightKg: anchor.$2,
     );
   }
+
+  static int _exerciseCalories(
+    List<Map<String, dynamic>> activities,
+    List<Map<String, dynamic>> workouts,
+  ) {
+    var total = 0;
+    final duplicateKeys = <String>{};
+
+    for (final activity in activities) {
+      final kcal = _int(activity['kc']);
+      final minutes = _int(activity['min']);
+      final name = activity['n']?.toString().trim().toLowerCase() ?? '';
+      final exactKey = '$name|$minutes|$kcal';
+      final overlapKey = '$minutes|$kcal';
+      final matchingWorkout = workouts.any((workout) {
+        final workoutName = workout['n']?.toString().trim().toLowerCase() ?? '';
+        final workoutMinutes = _int(workout['min']);
+        final workoutKcal = _int(workout['kc']);
+        final workoutExactKey = '$workoutName|$workoutMinutes|$workoutKcal';
+        return exactKey == workoutExactKey ||
+            overlapKey == '$workoutMinutes|$workoutKcal';
+      });
+      if (!matchingWorkout) {
+        total += kcal;
+      } else {
+        duplicateKeys.add(overlapKey);
+      }
+    }
+
+    for (final workout in workouts) {
+      final kcal = _int(workout['kc']);
+      final minutes = _int(workout['min']);
+      final overlapKey = '$minutes|$kcal';
+      if (!duplicateKeys.contains(overlapKey)) {
+        total += kcal;
+      } else {
+        duplicateKeys.remove(overlapKey);
+        total += kcal;
+      }
+    }
+    return total;
+  }
+
+  static int _stepCalories(int steps, num weightKg, num heightCm) =>
+      (steps * weightKg * heightCm * 0.000002075).round();
 
   static (DateTime, double)? _anchor(
     Map<String, dynamic> data,
@@ -246,7 +446,7 @@ class WeightEstimator {
   static String _signature(Map<String, dynamic> data) {
     final goal = data['goal'];
     final source = {
-      'estimateVersion': 3,
+      'estimateVersion': 7,
       'today': _dateKey(DateTime.now()),
       'dataDay': data['day'],
       'weights': data['weights'],
@@ -297,6 +497,9 @@ class WeightEstimator {
   }
 
   static DateTime? _parseDate(Object? value) {
+    if (value is DateTime) {
+      return DateTime(value.year, value.month, value.day);
+    }
     if (value is! String) return null;
     final parsed = DateTime.tryParse(value);
     return parsed == null

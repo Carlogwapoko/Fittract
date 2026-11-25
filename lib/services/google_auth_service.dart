@@ -3,7 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-import '../firebase_options.dart';
+import 'firebase_initializer.dart';
 
 class GoogleAuthService {
   static Future<void>? _googleSignInInitialization;
@@ -14,10 +14,23 @@ class GoogleAuthService {
   static Future<void> Function()? debugSignOutOverride;
 
   @visibleForTesting
-  static Future<UserCredential> Function()? debugSignInOverride;
+  static Future<GoogleAuthAccount> Function()? debugSignInOverride;
 
   @visibleForTesting
   static Future<void> Function()? debugGoogleSignInInitializeOverride;
+
+  @visibleForTesting
+  static Future<void> Function()? debugFirebaseInitializeOverride;
+
+  @visibleForTesting
+  static Future<String?> Function()? debugGoogleIdTokenOverride;
+
+  @visibleForTesting
+  static Future<GoogleAuthAccount> Function(AuthCredential credential)?
+  debugFirebaseCredentialSignInOverride;
+
+  @visibleForTesting
+  static TargetPlatform? debugTargetPlatformOverride;
 
   @visibleForTesting
   static Future<void> initializeGoogleSignInForTesting() =>
@@ -26,8 +39,13 @@ class GoogleAuthService {
   @visibleForTesting
   static void resetGoogleSignInInitializationForTesting() {
     _googleSignInInitialization = null;
+    debugSignOutOverride = null;
     debugSignInOverride = null;
     debugGoogleSignInInitializeOverride = null;
+    debugFirebaseInitializeOverride = null;
+    debugGoogleIdTokenOverride = null;
+    debugFirebaseCredentialSignInOverride = null;
+    debugTargetPlatformOverride = null;
   }
 
   static Future<void> _ensureGoogleSignInInitialized() {
@@ -48,25 +66,34 @@ class GoogleAuthService {
     });
   }
 
-  Future<UserCredential> signIn() async {
+  Future<GoogleAuthAccount> signIn() async {
     final override = debugSignInOverride;
     if (override != null) return override();
 
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-    }
+    await (debugFirebaseInitializeOverride?.call() ??
+        ensureFirebaseInitialized());
 
     final provider = GoogleAuthProvider()
       ..setCustomParameters({'prompt': 'select_account'});
     if (kIsWeb) {
-      return FirebaseAuth.instance.signInWithPopup(provider);
+      return _accountFromCredential(
+        await FirebaseAuth.instance.signInWithPopup(provider),
+      );
     }
 
-    if (defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS) {
-      return FirebaseAuth.instance.signInWithProvider(provider);
+    final platform = debugTargetPlatformOverride ?? defaultTargetPlatform;
+    if (platform == TargetPlatform.android) {
+      await _ensureGoogleSignInInitialized();
+      final idToken = debugGoogleIdTokenOverride != null
+          ? await debugGoogleIdTokenOverride!.call()
+          : (await GoogleSignIn.instance.authenticate()).authentication.idToken;
+      return _signInWithGoogleIdToken(idToken);
+    }
+
+    if (platform == TargetPlatform.iOS) {
+      return _accountFromCredential(
+        await FirebaseAuth.instance.signInWithProvider(provider),
+      );
     }
 
     await _ensureGoogleSignInInitialized();
@@ -74,7 +101,10 @@ class GoogleAuthService {
     // Clear any prior Google session so authenticate presents account choice.
     await GoogleSignIn.instance.signOut();
     final account = await GoogleSignIn.instance.authenticate();
-    final idToken = account.authentication.idToken;
+    return _signInWithGoogleIdToken(account.authentication.idToken);
+  }
+
+  Future<GoogleAuthAccount> _signInWithGoogleIdToken(String? idToken) async {
     if (idToken == null) {
       throw FirebaseAuthException(
         code: 'missing-google-id-token',
@@ -83,19 +113,53 @@ class GoogleAuthService {
     }
 
     final credential = GoogleAuthProvider.credential(idToken: idToken);
-    return FirebaseAuth.instance.signInWithCredential(credential);
+    final override = debugFirebaseCredentialSignInOverride;
+    if (override != null) return override(credential);
+    return _accountFromCredential(
+      await FirebaseAuth.instance.signInWithCredential(credential),
+    );
   }
 
-  Future<void> signOut() async {
+  GoogleAuthAccount _accountFromCredential(UserCredential credential) {
+    final user = credential.user;
+    if (user == null) {
+      throw StateError('Google sign-in did not return an account.');
+    }
+    return GoogleAuthAccount(
+      uid: user.uid,
+      email: user.email ?? '',
+      displayName: user.displayName ?? '',
+      photoUrl: user.photoURL,
+    );
+  }
+
+  Future<void> signOut({bool firebaseAlreadySignedOut = false}) async {
     final override = debugSignOutOverride;
     if (override != null) return override();
     if (Firebase.apps.isEmpty) return;
-    await FirebaseAuth.instance.signOut();
+    if (!firebaseAlreadySignedOut) {
+      await FirebaseAuth.instance.signOut();
+    }
     if (_googleSignInInitialization != null) {
       await _ensureGoogleSignInInitialized();
       await GoogleSignIn.instance.signOut();
     }
   }
+}
+
+@immutable
+class GoogleAuthAccount {
+  const GoogleAuthAccount({
+    required this.uid,
+    required this.email,
+    required this.displayName,
+    this.photoUrl,
+  });
+
+  final String uid;
+  final String email;
+  final String displayName;
+  final String? photoUrl;
 }
 
 String googleAuthErrorMessage(Object error) {

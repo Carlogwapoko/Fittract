@@ -41,17 +41,20 @@ dependencies:
   crypto: ^3.0.3
   firebase_core: ^5.0.0
   firebase_auth: ^7.0.1
-  firebase_storage: ^14.0.1
   flutter_svg: ^2.2.3
   image_picker: ^1.2.0
   google_sign_in: ^7.2.0
-  cloud_firestore: ^7.0.0
   http: ^1.4.0
   web: ^1.1.1
   url_launcher: ^6.3.2
   image: ^4.12.0
   geolocator: ^14.1.2
-
+  cloud_firestore: 7.0.0
+  pedometer: ^4.2.0
+  permission_handler: 12.0.1
+  sqflite: ^2.4.6
+  sqflite_common_ffi: ^2.4.7
+  path: ^1.9.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -9,22 +9,13 @@ import 'shared_widgets.dart';
 class _Activity {
   final String name;
   final IconData icon;
-  final int caloriesPerMinute;
-  final int stepsPerMinute;
-  final double kmPerMinute;
 
-  const _Activity(
-    this.name,
-    this.icon,
-    this.caloriesPerMinute,
-    this.stepsPerMinute,
-    this.kmPerMinute,
-  );
+  const _Activity(this.name, this.icon);
 }
 
 const _activities = [
-  _Activity('Brisk walk', Icons.directions_walk, 4, 110, .08),
-  _Activity('Running', Icons.directions_run, 10, 160, .16),
+  _Activity('Brisk walk', Icons.directions_walk),
+  _Activity('Running', Icons.directions_run),
 ];
 
 /// Icons for removed activity types remain available for existing log rows.
@@ -61,8 +52,6 @@ class _LogActivitySheet extends StatefulWidget {
 
 class _LogActivitySheetState extends State<_LogActivitySheet> {
   int _selected = 0;
-  int _minutes = 30;
-  bool _manualMode = false;
   bool _requestingLocation = false;
   final _distance = TextEditingController();
 
@@ -76,11 +65,6 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
     (activity) => activity.name == _sessionName,
     orElse: () => _activity,
   );
-  int get _calories => _minutes * _activity.caloriesPerMinute;
-  int get _steps => _minutes * _activity.stepsPerMinute;
-  double get _km => _distance.text.trim().isEmpty
-      ? _minutes * _activity.kmPerMinute
-      : num_(_distance.text);
   double? get _enteredDistanceKm {
     final value = _distance.text.trim();
     if (value.isEmpty) return null;
@@ -121,12 +105,12 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
     final tracking = _tracking;
     final stopped = _stopped;
     final selectedActivity = tracked ? _sessionActivity : _activity;
+    final gpsMessage = activityTracking.gpsMessage;
     final elapsedSeconds = activityTracking.elapsedSeconds;
     final distanceMeters = activityTracking.distanceMeters;
     final distanceKm = distanceMeters / 1000;
     final estimatedSteps = activityTracking.estimatedSteps();
     final trackedCalories = activityTracking.caloriesFor(elapsedSeconds);
-    final showManualControls = _manualMode && !tracked;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -176,67 +160,23 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                   ),
               ],
             ),
-            if (activityTracking.gpsMessage case final message?) ...[
-              const SizedBox(height: kGapSm),
-              Text(message, style: muted),
-            ],
-            if (showManualControls) ...[
-              const SizedBox(height: kGapLg),
-              const Text('Duration', style: muted),
+            if (tracking && gpsMessage != null) ...[
               const SizedBox(height: kGapSm),
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  IconButton.filledTonal(
-                    onPressed: () => setState(
-                      () => _minutes = (_minutes - 5).clamp(5, 300).toInt(),
-                    ),
-                    icon: const Icon(Icons.remove),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 22),
-                    child: Text(
-                      '$_minutes min',
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  IconButton.filledTonal(
-                    onPressed: () => setState(
-                      () => _minutes = (_minutes + 5).clamp(5, 300).toInt(),
-                    ),
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (final minutes in [15, 30, 45, 60])
-                    Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: ActionChip(
-                        label: Text('$minutes min'),
-                        onPressed: () => setState(() => _minutes = minutes),
-                      ),
+                  Expanded(child: Text(gpsMessage, style: muted)),
+                  if (activityTracking.gpsStatus == GpsStatus.deniedForever &&
+                      activityTracking.canOpenAppSettings)
+                    TextButton(
+                      onPressed: activityTracking.openAppSettings,
+                      child: const Text('Open settings'),
+                    )
+                  else if (activityTracking.gpsStatus == GpsStatus.serviceOff)
+                    TextButton(
+                      onPressed: activityTracking.openLocationSettings,
+                      child: const Text('Turn on'),
                     ),
                 ],
-              ),
-              const SizedBox(height: kGapMd),
-              TextField(
-                controller: _distance,
-                onChanged: (_) => setState(() {}),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Distance (km)',
-                  hintText: 'Optional',
-                  prefixIcon: Icon(Icons.route_outlined),
-                  helperText: 'Leave blank to estimate from your activity.',
-                ),
               ),
             ],
             const SizedBox(height: kGapLg),
@@ -275,12 +215,6 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                                 'steps',
                               ),
                             ]
-                    : showManualControls
-                    ? [
-                        _stat('$_calories', 'kcal'),
-                        _stat('$_steps', 'steps'),
-                        _stat(_km.toStringAsFixed(1), 'km'),
-                      ]
                     : [
                         _stat('--', 'time'),
                         _stat('--', 'km'),
@@ -304,7 +238,7 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
               ),
             ],
             const SizedBox(height: kGapLg),
-            if (!tracked && !_manualMode)
+            if (!tracked)
               btn('Start', _start, icon: Icons.play_arrow)
             else if (tracking)
               SizedBox(
@@ -323,8 +257,6 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                   ),
                 ),
               )
-            else if (_manualMode && !tracked)
-              btn('Save activity', _saveManual, icon: Icons.save_outlined)
             else if (stopped)
               btn('Save activity', _saveTracked, icon: Icons.save_outlined),
             if (tracking) ...[
@@ -341,15 +273,6 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
                 child: TextButton(
                   onPressed: activityTracking.discard,
                   child: const Text('Discard'),
-                ),
-              ),
-            ] else if (!tracked && !_manualMode) ...[
-              Center(
-                child: TextButton(
-                  onPressed: _requestingLocation
-                      ? null
-                      : () => setState(() => _manualMode = true),
-                  child: const Text('Add manually instead'),
                 ),
               ),
             ],
@@ -372,9 +295,63 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
   Future<void> _start() async {
     if (_requestingLocation) return;
     setState(() => _requestingLocation = true);
-    await activityTracking.start(_activity.name);
+    final needsGps = _activity.name != 'Swimming' && _activity.name != 'Yoga';
+    if (needsGps && !await _confirmLocationUse()) {
+      if (mounted) setState(() => _requestingLocation = false);
+      return;
+    }
+    await activityTracking.start(
+      _activity.name,
+      confirmBackgroundPermission: _confirmBackgroundLocation,
+    );
     if (mounted) setState(() => _requestingLocation = false);
   }
+
+  Future<bool> _confirmLocationUse() async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Measure activity distance'),
+          content: const Text(
+            'Fittract uses your location while tracking to measure distance. '
+            'Location updates may continue when the screen is locked.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Not now'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<bool> _confirmBackgroundLocation() async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Keep tracking in the background?'),
+          content: const Text(
+            'Allow background location so distance can keep updating while '
+            'your phone is locked. You can continue without it.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Continue without'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Allow'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 
   void _stop() => activityTracking.stop();
 
@@ -398,31 +375,6 @@ class _LogActivitySheetState extends State<_LogActivitySheet> {
     final km = _enteredDistanceKm ?? gpsKm;
     if (km <= 0) return '--';
     return store.withThousands(activityTracking.estimatedSteps(km * 1000));
-  }
-
-  void _saveManual() {
-    final enteredDistance = _distance.text.trim();
-    if (enteredDistance.isNotEmpty) {
-      final parsedDistance = double.tryParse(enteredDistance);
-      if (parsedDistance == null ||
-          !parsedDistance.isFinite ||
-          parsedDistance < 0) {
-        snack(context, 'Enter a valid distance of 0 or more.');
-        return;
-      }
-    }
-    store.acts.add({
-      'd': today(),
-      'n': _activity.name,
-      'min': _minutes,
-      'km': double.parse(_km.toStringAsFixed(1)),
-      'kc': _calories,
-      'st': _steps,
-      't': DateTime.now().millisecondsSinceEpoch,
-    });
-    store.d['steps'] = store.steps + _steps;
-    store.save();
-    Navigator.pop(context);
   }
 
   void _saveTracked() {

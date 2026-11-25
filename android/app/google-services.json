@@ -12,7 +12,12 @@
           "package_name": "com.example.fittract"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "223638020988-6h3qdv15i1gb6ij5l3afioenorgpkdvi.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDrwr2YyIKLFIGx4cWiuNlf_W9uzlMAi78"
@@ -20,10 +25,20 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [{ "client_id": "....apps.googleusercontent.com",
-       "client_type": 1,
-       "android_info": { "package_name": "com.example.fittract", "certificate_hash": "..." } },
-     { "client_id": "....apps.googleusercontent.com", "client_type": 3 }]
+          "other_platform_oauth_client": [
+            {
+              "client_id": "....apps.googleusercontent.com",
+              "client_type": 1,
+              "android_info": {
+                "package_name": "com.example.fittract",
+                "certificate_hash": "..."
+              }
+            },
+            {
+              "client_id": "223638020988-6h3qdv15i1gb6ij5l3afioenorgpkdvi.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="fittractBackground" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#168779"/>
+      <stop offset="1" stop-color="#063F3C"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#fittractBackground)"/>
+  <path d="M170 194h442v92H270v104h250v92H270v240h-100Z"
+        fill="#FFFFFF" fill-opacity=".32"/>
+  <path d="M512 784C447 723 240 563 240 410c0-105 121-162 212-109 28 17 47 42 60 64 13-22 32-47 60-64 91-53 212 4 212 109 0 153-207 313-272 374Z"
+        fill="#A6E9D7"/>
+  <path d="M278 507h145l57-91 70 184 67-121h128"
+        fill="none" stroke="#0B6B60" stroke-linecap="round"
+        stroke-linejoin="round" stroke-width="46"/>
+</svg>

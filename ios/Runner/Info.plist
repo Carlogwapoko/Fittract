@@ -29,7 +29,13 @@
 	<key>NSCameraUsageDescription</key>
 	<string>FitTrack uses the camera to scan your meal and estimate its ingredients and nutrition.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>FitTrack uses your location to measure distance while you track an activity.</string>
+	<string>Fittract uses your location to measure distance while you track an activity, including when the screen is locked.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Fittract uses your location to keep measuring distance while your activity is tracked in the background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Fittract uses your location to keep measuring distance while your activity is tracked in the background.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Fittract uses motion activity to count your daily steps.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>FitTrack lets you choose a meal photo to scan its ingredients and nutrition.</string>
 	<key>UIApplicationSceneManifest</key>
@@ -53,6 +59,10 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

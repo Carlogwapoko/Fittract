@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/weight_estimator.dart';
 import '../services/session_wake_lock_stub.dart'
     if (dart.library.js_interop) '../services/session_wake_lock_web.dart';
 import '../store/store.dart';
@@ -491,6 +492,29 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
     return volume.round();
   }
 
+  int _workoutCalories() {
+    final estimate = WeightEstimator.calculate(store.d);
+    if (!estimate.hasAnchor) return 0;
+    final baseMet = switch (_category.toLowerCase()) {
+      'cardio' => 7.0,
+      'mobility' => 2.5,
+      _ => 5.0,
+    };
+    final intensity = (widget.r['intensity'] ?? widget.r['level'] ?? '')
+        .toString()
+        .toLowerCase();
+    final intensityFactor = switch (intensity) {
+      'beginner' || 'low' || 'light' => .9,
+      'advanced' || 'high' || 'vigorous' => 1.15,
+      _ => 1.0,
+    };
+    return WeightEstimator.activeCaloriesFromMet(
+      weightKg: estimate.currentWeightKg,
+      durationSeconds: secs,
+      met: baseMet * intensityFactor,
+    );
+  }
+
   Future<void> _finish() async {
     for (var exerciseIndex = 0; exerciseIndex < sets.length; exerciseIndex++) {
       for (final set in sets[exerciseIndex]) {
@@ -522,7 +546,7 @@ class _WorkoutState extends State<WorkoutScreen> with WidgetsBindingObserver {
       'ex': _doneCount,
       'totalEx': exs.length,
       'sets': setDone,
-      'kc': (secs / 60 * 7 + _doneCount * 20).round(),
+      'kc': _workoutCalories(),
     };
     store.hist.add(history);
     final lastWorkout = Map<String, dynamic>.from(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -234,24 +235,113 @@ Widget mealPicture(
     return ClipRRect(borderRadius: BorderRadius.circular(14), child: fallback);
   }
 
-  final imageWidget = path.startsWith('assets/')
-      ? Image.asset(
-          path,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => fallback,
-        )
-      : Image.network(
-          path,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => fallback,
-        );
+  final Widget imageWidget;
+  if (path.startsWith('assets/')) {
+    imageWidget = Image.asset(
+      path,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => fallback,
+    );
+  } else if (path.startsWith('firestore://')) {
+    final uid = store.sessionUid;
+    final imageId = path.substring('firestore://'.length);
+    imageWidget = uid == null || imageId.isEmpty
+        ? fallback
+        : _RemoteMealImage(
+            uid: uid,
+            imageId: imageId,
+            size: size,
+            fallback: fallback,
+          );
+  } else if (path.startsWith('https://')) {
+    imageWidget = Image.network(
+      path,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => fallback,
+    );
+  } else if (path.startsWith('data:image/')) {
+    try {
+      imageWidget = Image.memory(
+        base64Decode(path.substring(path.indexOf(',') + 1)),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback,
+      );
+    } on FormatException {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: fallback,
+      );
+    }
+  } else {
+    imageWidget = fallback;
+  }
   return ClipRRect(
     borderRadius: BorderRadius.circular(14),
     child: SizedBox(width: size, height: size, child: imageWidget),
+  );
+}
+
+class _RemoteMealImage extends StatefulWidget {
+  const _RemoteMealImage({
+    required this.uid,
+    required this.imageId,
+    required this.size,
+    required this.fallback,
+  });
+
+  final String uid;
+  final String imageId;
+  final double size;
+  final Widget fallback;
+
+  @override
+  State<_RemoteMealImage> createState() => _RemoteMealImageState();
+}
+
+class _RemoteMealImageState extends State<_RemoteMealImage> {
+  late Future<Uint8List?> _image;
+
+  void _loadImage() {
+    _image = FoodImageService().download(
+      uid: widget.uid,
+      imageId: widget.imageId,
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RemoteMealImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uid != widget.uid || oldWidget.imageId != widget.imageId) {
+      _loadImage();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Uint8List?>(
+    future: _image,
+    builder: (context, snapshot) {
+      final bytes = snapshot.data;
+      if (bytes == null) return widget.fallback;
+      return Image.memory(
+        bytes,
+        width: widget.size,
+        height: widget.size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => widget.fallback,
+      );
+    },
   );
 }
 
@@ -468,9 +558,18 @@ class _MealPickerScreenState extends State<MealPickerScreen> {
 }
 
 class ManualMealScreen extends StatefulWidget {
-  const ManualMealScreen({super.key, this.aiService});
+  const ManualMealScreen({
+    super.key,
+    this.aiService,
+    this.photoPicker,
+    this.recoveredPhoto,
+  });
 
   final FoodAiService? aiService;
+  final Future<XFile?> Function(ImageSource source)? photoPicker;
+  final XFile? recoveredPhoto;
+
+  static const pendingScanPreferenceKey = 'pending_food_scan';
 
   @override
   State<ManualMealScreen> createState() => _ManualMealScreenState();
@@ -499,6 +598,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   bool _keepPhotoMismatch = false;
   bool _retryPhotoMatch = false;
   bool _hasAiNutritionFallback = false;
+  String _photoValidationStatus = 'not_scanned';
+  String _photoValidationMethod = 'none';
+  bool? _photoValidationMatchesPhoto;
+  DateTime? _photoValidationCheckedAt;
   String? _nutritionError;
   String? _scanError;
   String? _photoError;
@@ -525,49 +628,90 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    final recoveredPhoto = widget.recoveredPhoto;
+    if (recoveredPhoto != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scanFood(pickedPhoto: recoveredPhoto);
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final photoControls = Row(
-      children: [
-        Expanded(
-          child: SizedBox(
-            height: 52,
-            child: FilledButton.icon(
-              onPressed: _scanning || _saving
-                  ? null
-                  : () => _scanFood(ImageSource.camera),
-              icon: const Icon(Icons.camera_alt_outlined),
-              label: Text(_scanning ? 'Scanning your food…' : 'Scan your food'),
-              style: FilledButton.styleFrom(
-                backgroundColor: primaryOf(context),
-                foregroundColor: theme.colorScheme.onPrimary,
-                textStyle: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
+    final scanButton = SizedBox(
+      height: 56,
+      child: FilledButton.icon(
+        onPressed: _scanning || _saving
+            ? null
+            : () => _scanFood(source: ImageSource.camera),
+        icon: const Icon(Icons.camera_alt_outlined),
+        label: const Text('Scan your food', maxLines: 1, softWrap: false),
+        style: FilledButton.styleFrom(
+          backgroundColor: primaryOf(context),
+          foregroundColor: theme.colorScheme.onPrimary,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          iconSize: 20,
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
-        const SizedBox(width: kGapSm),
-        Expanded(
-          child: SizedBox(
-            height: 52,
-            child: OutlinedButton.icon(
-              onPressed: _saving || _scanning
-                  ? null
-                  : () => _scanFood(ImageSource.gallery),
-              icon: const Icon(Icons.photo_library_outlined),
-              label: const Text('Choose from gallery'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: primaryOf(context),
-                side: BorderSide(color: theme.colorScheme.outlineVariant),
-              ),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
+    final galleryButton = SizedBox(
+      height: 56,
+      child: OutlinedButton.icon(
+        onPressed: _saving || _scanning
+            ? null
+            : () => _scanFood(source: ImageSource.gallery),
+        icon: const Icon(Icons.photo_library_outlined),
+        label: const Text('Choose from gallery', maxLines: 1, softWrap: false),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: primaryOf(context),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          iconSize: 20,
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          side: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+    );
+    final photoControls = LayoutBuilder(
+      builder: (context, constraints) => constraints.maxWidth < 380
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                scanButton,
+                const SizedBox(height: kGapSm),
+                galleryButton,
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(child: scanButton),
+                const SizedBox(width: kGapSm),
+                Expanded(child: galleryButton),
+              ],
+            ),
+    );
+    final scanProgress = _scanning
+        ? Padding(
+            padding: const EdgeInsets.only(top: kGapSm),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: primaryOf(context),
+                  ),
+                ),
+                const SizedBox(width: kGapSm),
+                const Text('Scanning your food…', style: muted),
+              ],
+            ),
+          )
+        : const SizedBox.shrink();
 
     return Scaffold(
       body: SafeArea(
@@ -594,7 +738,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                       const SizedBox(width: kGapMd),
                       Expanded(
                         child: Text(
-                          'Enter what you ate. Ingredients and nutrition can be filled in automatically.',
+                          'Scan or enter what you ate. Ingredients and nutrition can be filled in automatically.',
                           style: TextStyle(fontWeight: FontWeight.w500),
                         ),
                       ),
@@ -602,6 +746,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                   ),
                 ),
                 photoControls,
+                scanProgress,
                 if (_foodImageBytes != null) ...[
                   const SizedBox(height: kGapSm),
                   Row(
@@ -629,9 +774,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                         ),
                       ),
                       TextButton(
-                        onPressed: _scanning || _saving
-                            ? null
-                            : () => _scanFood(ImageSource.camera),
+                        onPressed: _scanning || _saving ? null : _retryScan,
                         child: const Text('Scan again'),
                       ),
                     ],
@@ -766,26 +909,12 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                 if (_showPhotoMismatch) _photoMismatchCard(),
                 h3(
                   'Nutrition',
-                  trailing: Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 4,
-                    children: [
-                      TextButton.icon(
-                        onPressed: _ingredients.isEmpty || _calculatingNutrition
-                            ? null
-                            : () => _calculateNutrition(force: true),
-                        icon: const Icon(Icons.refresh, size: 18),
-                        label: const Text('Recalculate nutrition'),
-                      ),
-                      Text(
-                        'USDA + GEMINI',
-                        style: TextStyle(
-                          color: primaryOf(context),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
+                  trailing: TextButton.icon(
+                    onPressed: _ingredients.isEmpty || _calculatingNutrition
+                        ? null
+                        : () => _calculateNutrition(force: true),
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Recalculate nutrition'),
                   ),
                 ),
                 Text(
@@ -807,7 +936,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                       style: muted,
                     ),
                   ),
-                if (_calculatingNutrition)
+                if (_calculatingNutrition && !_scanning)
                   const Padding(
                     padding: EdgeInsets.only(top: kGapSm),
                     child: Row(
@@ -1035,6 +1164,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
                 onPressed: () => setState(() {
                   _showPhotoMismatch = false;
                   _keepPhotoMismatch = true;
+                  _photoValidationStatus = 'mismatch_accepted';
+                  _photoValidationMethod = 'ingredient_comparison';
+                  _photoValidationMatchesPhoto = false;
+                  _photoValidationCheckedAt = DateTime.now().toUtc();
                 }),
                 child: const Text('Keep as is'),
               ),
@@ -1109,14 +1242,23 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     return true;
   }
 
-  void _ingredientsChanged({bool recalculateNutrition = true}) {
+  void _ingredientsChanged({
+    bool recalculateNutrition = true,
+    bool calculateNutritionImmediately = false,
+  }) {
     _photoMatchRequest++;
     _keepPhotoMismatch = false;
+    if (_photoWasAnalyzed &&
+        _sameIngredients(_ingredients, _photoDetectedIngredients)) {
+      _setPhotoValidation('recognized', method: 'food_scan');
+    }
     setState(() {
       _checkingPhotoMatch = false;
       _showPhotoMismatch = false;
     });
-    if (recalculateNutrition) _scheduleNutrition();
+    if (recalculateNutrition) {
+      _scheduleNutrition(immediate: calculateNutritionImmediately);
+    }
     if (!_sameIngredients(_ingredients, _photoDetectedIngredients)) {
       if (_photoWasAnalyzed && _ingredients.isEmpty) {
         setState(() => _showPhotoMismatch = true);
@@ -1126,7 +1268,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     }
   }
 
-  void _scheduleNutrition() {
+  void _scheduleNutrition({bool immediate = false}) {
     _nutritionDebounce?.cancel();
     _nutritionRequest++;
     if (_ingredients.isEmpty) {
@@ -1149,6 +1291,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       if (!_editedNutrition.contains('carbs')) _carbs.clear();
       if (!_editedNutrition.contains('fat')) _fat.clear();
     });
+    if (immediate) {
+      unawaited(_calculateNutrition());
+      return;
+    }
     _nutritionDebounce = Timer(
       const Duration(milliseconds: 700),
       () => _calculateNutrition(),
@@ -1240,6 +1386,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     }
     final request = ++_photoMatchRequest;
     final ingredients = List<MealIngredient>.unmodifiable(_ingredients);
+    _photoValidationStatus = 'pending';
+    _photoValidationMethod = 'ingredient_comparison';
+    _photoValidationMatchesPhoto = null;
+    _photoValidationCheckedAt = null;
     setState(() {
       _checkingPhotoMatch = true;
       _photoError = null;
@@ -1255,6 +1405,11 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         _checkingPhotoMatch = false;
         _showPhotoMismatch = !matches;
         _keepPhotoMismatch = false;
+        _setPhotoValidation(
+          matches ? 'matched' : 'mismatch',
+          method: 'ingredient_comparison',
+          matchesPhoto: matches,
+        );
       });
     } on FoodAiException {
       _setPhotoMatchFailure(request);
@@ -1275,6 +1430,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     setState(() {
       _checkingPhotoMatch = false;
       _photoError = 'Could not compare the ingredients with the photo. You can keep your list or try again.';
+      _setPhotoValidation('comparison_failed', method: 'ingredient_comparison');
     });
   }
 
@@ -1285,6 +1441,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         ..addAll(_photoDetectedIngredients);
       _showPhotoMismatch = false;
       _keepPhotoMismatch = false;
+      _setPhotoValidation('recognized', method: 'food_scan');
     });
     _ingredientsChanged();
   }
@@ -1329,21 +1486,52 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     return false;
   }
 
-  Future<void> _scanFood(ImageSource source) async {
+  Future<void> _scanFood({
+    ImageSource source = ImageSource.camera,
+    XFile? pickedPhoto,
+  }) async {
     if (_scanning || _saving) return;
     setState(() => _scanning = true);
+    final usesNativePicker = pickedPhoto == null && widget.photoPicker == null;
+    var pendingPickerResult = false;
     try {
       if (!await _confirmScanPrivacy() || !mounted) return;
-      final picked = await _imagePicker.pickImage(
-        source: source,
-        imageQuality: 80,
-        maxWidth: 1024,
-        maxHeight: 1024,
-      );
+      if (usesNativePicker) {
+        final preferences = await SharedPreferences.getInstance();
+        final saved = await preferences.setBool(
+          ManualMealScreen.pendingScanPreferenceKey,
+          true,
+        );
+        if (!saved) {
+          throw PlatformException(
+            code: 'food_scan_recovery_unavailable',
+            message: 'Could not prepare to recover the captured meal photo.',
+          );
+        }
+        pendingPickerResult = true;
+      }
+      final photoPicker = widget.photoPicker;
+      final picked =
+          pickedPhoto ??
+          (photoPicker == null
+              ? await _imagePicker.pickImage(
+                  source: source,
+                  imageQuality: 80,
+                  maxWidth: 1024,
+                  maxHeight: 1024,
+                )
+              : await photoPicker(source));
+      if (pendingPickerResult) {
+        await _clearPendingScanMarker();
+        pendingPickerResult = false;
+      }
       if (picked == null) return;
       final request = ++_photoAnalysisRequest;
+      _nutritionDebounce?.cancel();
+      _nutritionRequest++;
       setState(() {
         _foodImageBytes = null;
+        _calculatingNutrition = false;
         _foodImageName = picked.name;
         _scanError = null;
         _photoError = null;
@@ -1354,6 +1542,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         _keepPhotoMismatch = false;
         _photoDetectedIngredients = [];
         _photoMatchRequest++;
+        _setPhotoValidation('pending', method: 'food_scan');
       });
       final compressed = await _compressPickedPhoto(picked);
       if (!mounted || request != _photoAnalysisRequest) return;
@@ -1391,7 +1580,22 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         debugPrint('Meal photo read failed: $error');
       }
     } finally {
+      if (pendingPickerResult) {
+        await _clearPendingScanMarker();
+      }
       if (mounted && _scanning) setState(() => _scanning = false);
+    }
+  }
+
+  Future<void> _clearPendingScanMarker() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.remove(ManualMealScreen.pendingScanPreferenceKey);
+    } on Exception catch (error, stackTrace) {
+      debugPrint(
+        'Could not clear the pending meal photo recovery marker: '
+        '$error\n$stackTrace',
+      );
     }
   }
 
@@ -1400,10 +1604,12 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       final imageBytes = await picked.readAsBytes();
       return await _aiService.compressPhoto(imageBytes);
     } finally {
-      try {
-        await deletePickedPhoto(picked.path);
-      } on Exception catch (error) {
-        debugPrint('Could not delete the temporary meal photo: $error');
+      if (picked.path.isNotEmpty) {
+        try {
+          await deletePickedPhoto(picked.path);
+        } on Exception catch (error) {
+          debugPrint('Could not delete the temporary meal photo: $error');
+        }
       }
     }
   }
@@ -1426,7 +1632,7 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
           FilledButton(
             onPressed: () {
               Navigator.pop(dialogContext);
-              _scanFood(ImageSource.gallery);
+              _scanFood(source: ImageSource.gallery);
             },
             child: const Text('Choose from gallery'),
           ),
@@ -1436,42 +1642,51 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
   }
 
   Future<void> _retryScan() async {
-    final bytes = _foodImageBytes;
-    if (bytes == null) {
-      await _scanFood(ImageSource.gallery);
+    final imageBytes = _foodImageBytes;
+    if (imageBytes == null) {
+      await _scanFood();
       return;
     }
+    if (_scanning || _saving) return;
+
     final request = ++_photoAnalysisRequest;
+    _nutritionDebounce?.cancel();
+    _nutritionRequest++;
     setState(() {
       _scanning = true;
+      _calculatingNutrition = false;
       _scanError = null;
       _photoError = null;
+      _nutritionError = null;
+      _checkingPhotoMatch = false;
+      _photoWasAnalyzed = false;
+      _showPhotoMismatch = false;
+      _keepPhotoMismatch = false;
+      _photoDetectedIngredients = [];
+      _photoMatchRequest++;
+      _setPhotoValidation('pending', method: 'food_scan');
     });
-    try {
-      final compressed = await _aiService.compressPhoto(bytes);
-      if (!mounted || request != _photoAnalysisRequest) return;
-      setState(() {
-        _foodImageBytes = compressed;
-        _foodImageName = 'meal-scan.jpg';
-      });
-      await _runMealScan(compressed, request);
-    } on FormatException catch (error) {
-      _setScanFailure(request, error.message);
-    } on Exception {
-      _setScanFailure(request);
-    }
+    await _runMealScan(imageBytes, request);
   }
 
   Future<void> _runMealScan(Uint8List jpegBytes, int request) async {
+    if (!mounted || request != _photoAnalysisRequest) return;
+    setState(() => _calculatingNutrition = true);
     try {
       final result = await _aiService.scanMeal(jpegBytes);
       if (!mounted || request != _photoAnalysisRequest) return;
       if (!result.isFood || result.ingredients.isEmpty) {
         setState(() {
           _scanning = false;
+          _calculatingNutrition = false;
           _photoWasAnalyzed = false;
           _photoDetectedIngredients = [];
           _scanError = "We couldn't recognise this food. Try again or add ingredients manually.";
+          _setPhotoValidation(
+            'not_food',
+            method: 'food_scan',
+            matchesPhoto: false,
+          );
         });
         return;
       }
@@ -1485,8 +1700,36 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
         _photoWasAnalyzed = true;
         _scanning = false;
         _scanError = null;
+        _setPhotoValidation('recognized', method: 'food_scan');
       });
-      _ingredientsChanged();
+      final nutrition = result.nutrition;
+      if (nutrition == null) {
+        if (result.nutritionUnavailable) {
+          _ingredientsChanged(recalculateNutrition: false);
+          setState(() {
+            _calculatingNutrition = false;
+            _nutritionError = 'Nutrition could not be calculated right now. Enter values manually or try again.';
+            _hasAiNutritionFallback = false;
+          });
+        } else {
+          _ingredientsChanged(calculateNutritionImmediately: true);
+        }
+      } else {
+        _nutritionDebounce?.cancel();
+        _nutritionRequest++;
+        _ingredientsChanged(recalculateNutrition: false);
+        _applyEstimate(nutrition);
+        setState(() {
+          _calculatingNutrition = false;
+          if (nutrition.ingredients.length == _ingredients.length) {
+            for (var index = 0; index < _ingredients.length; index++) {
+              _ingredients[index] = _ingredients[index].copyWith(
+                source: nutrition.ingredients[index].source,
+              );
+            }
+          }
+        });
+      }
     } on FoodAiException catch (error) {
       _setScanFailure(request, _friendlyWorkerError(error));
     } on FirebaseException {
@@ -1507,8 +1750,21 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     if (!mounted || request != _photoAnalysisRequest) return;
     setState(() {
       _scanning = false;
+      _calculatingNutrition = false;
       _scanError = message ?? 'We could not scan this photo right now. Try again or add ingredients manually.';
+      _setPhotoValidation('scan_failed', method: 'food_scan');
     });
+  }
+
+  void _setPhotoValidation(
+    String status, {
+    required String method,
+    bool? matchesPhoto,
+  }) {
+    _photoValidationStatus = status;
+    _photoValidationMethod = method;
+    _photoValidationMatchesPhoto = matchesPhoto;
+    _photoValidationCheckedAt = DateTime.now().toUtc();
   }
 
   String _friendlyWorkerError(FoodAiException error) => switch (error.code) {
@@ -1527,6 +1783,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
 
   Future<void> _save() async {
     if (_saving) return;
+    if (_checkingPhotoMatch) {
+      snack(context, 'Wait for the photo check to finish before saving.');
+      return;
+    }
     final name = _name.text.trim();
     final calories = _parseAmount(_calories.text);
     final protein = _parseAmount(_protein.text);
@@ -1557,9 +1817,19 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
       't': _type,
       'n': name,
       'desc': _description.text.trim(),
+      if (_foodImageBytes != null) 'localPhoto': base64Encode(_foodImageBytes!),
       'ingredients': [
         for (final ingredient in _ingredients) ingredient.toJson(),
       ],
+      'photoValidation': {
+        'status': _photoValidationStatus,
+        'method': _photoValidationMethod,
+        if (_photoValidationMatchesPhoto != null)
+          'matchesPhoto': _photoValidationMatchesPhoto,
+        'acceptedByUser': _photoValidationStatus == 'mismatch_accepted',
+        if (_photoValidationCheckedAt != null)
+          'checkedAt': _photoValidationCheckedAt!.toIso8601String(),
+      },
       'hasAiNutritionFallback': _hasAiNutritionFallback,
       'k': calories.round(),
       'p': protein.round(),
@@ -1568,72 +1838,10 @@ class _ManualMealScreenState extends State<ManualMealScreen> {
     };
     store.meals.add(meal);
     store.save();
-    final photo = _foodImageBytes;
-    final uid = store.sessionUid;
-    if (photo != null && store.isCloudLinked && uid != null) {
-      unawaited(
-        _uploadMealPhoto(
-          meal: meal,
-          uid: uid,
-          bytes: photo,
-          fileName: _foodImageName ?? 'meal-scan.jpg',
-          messenger: ScaffoldMessenger.of(context),
-        ),
-      );
-    }
-    final cloudSaved = store.isCloudLinked ? await store.syncNow() : null;
     if (!mounted) return;
     setState(() => _saving = false);
-    if (cloudSaved == false) {
-      snack(
-        context,
-        '$name saved on this device, but cloud sync failed. Retry from Profile.',
-      );
-    } else {
-      snack(context, '$name added to today.');
-    }
+    snack(context, '$name added to today.');
     Navigator.pop(context);
-  }
-
-  Future<void> _uploadMealPhoto({
-    required Map<String, dynamic> meal,
-    required String uid,
-    required Uint8List bytes,
-    required String fileName,
-    required ScaffoldMessengerState messenger,
-  }) async {
-    try {
-      final imageUrl = await FoodImageService().upload(
-        uid: uid,
-        bytes: bytes,
-        fileName: fileName,
-      );
-      if (store.sessionUid != uid) return;
-      meal['imageUrl'] = imageUrl;
-      store.save();
-    } on FirebaseException catch (error) {
-      _showMealPhotoUploadFailure(messenger, error, uid);
-    } on PlatformException catch (error) {
-      _showMealPhotoUploadFailure(messenger, error, uid);
-    } on StateError catch (error) {
-      _showMealPhotoUploadFailure(messenger, error, uid);
-    }
-  }
-
-  void _showMealPhotoUploadFailure(
-    ScaffoldMessengerState messenger,
-    Object error,
-    String uid,
-  ) {
-    if (store.sessionUid != uid) return;
-    debugPrint('Meal photo upload failed: $error');
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Meal saved locally, but its photo could not be uploaded.',
-        ),
-      ),
-    );
   }
 
   double? _parseAmount(String value) {

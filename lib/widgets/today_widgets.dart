@@ -306,33 +306,7 @@ class _ProgressRingCardState extends State<ProgressRingCard> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: RichText(
-                        textAlign: TextAlign.left,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        text: TextSpan(
-                          style: TextStyle(
-                            color: colors.onSurface,
-                            fontSize: widget.value.length > 11 ? 19 : 24,
-                            fontWeight: FontWeight.w800,
-                          ),
-                          children: [
-                            TextSpan(text: widget.value),
-                            if (widget.unit != null)
-                              TextSpan(
-                                text: ' ${widget.unit}',
-                                style: TextStyle(
-                                  color: colors.onSurfaceVariant,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    _value(context),
                     if (widget.supportingText != null) ...[
                       const SizedBox(height: 2),
                       Text(
@@ -388,6 +362,38 @@ class _ProgressRingCardState extends State<ProgressRingCard> {
       ),
     );
   }
+
+  Widget _value(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: double.infinity,
+      child: RichText(
+        textAlign: TextAlign.left,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        text: TextSpan(
+          style: TextStyle(
+            color: colors.onSurface,
+            fontSize: widget.value.length > 11 ? 19 : 24,
+            fontWeight: FontWeight.w800,
+          ),
+          children: [
+            TextSpan(text: widget.value),
+            if (widget.unit != null)
+              TextSpan(
+                text: ' ${widget.unit}',
+                style: TextStyle(
+                  color: colors.onSurfaceVariant,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
 }
 
 class TodayWorkoutCard extends StatelessWidget {
@@ -421,10 +427,18 @@ class TodayWorkoutCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = appTokensOf(context);
-    final background = tokens.heroBackground;
-    final badgeColor = tokens.heroForeground.withValues(alpha: .14);
     final completedCount = weeklyCount.clamp(0, weeklyGoal);
     final empty = title == null;
+    final colors = Theme.of(context).colorScheme;
+    final primaryColor = primaryOf(context);
+    final background = empty ? tokens.softTint : tokens.heroBackground;
+    final foreground = empty ? colors.onSurface : tokens.heroForeground;
+    final secondaryForeground = empty
+        ? colors.onSurfaceVariant
+        : tokens.heroForeground.withValues(alpha: .82);
+    final badgeColor = empty
+        ? primaryColor.withValues(alpha: .1)
+        : tokens.heroForeground.withValues(alpha: .14);
 
     Widget heroButton(
       String label,
@@ -434,11 +448,17 @@ class TodayWorkoutCard extends StatelessWidget {
       label: label,
       onPressed: onPressed,
       foregroundColor: primary
-          ? tokens.heroActionForeground
-          : tokens.heroForeground,
-      borderColor: primary ? null : tokens.heroForeground.withValues(alpha: .5),
+          ? (empty ? colors.onPrimary : tokens.heroActionForeground)
+          : (empty ? primaryColor : tokens.heroForeground),
+      borderColor: primary
+          ? null
+          : empty
+          ? primaryColor.withValues(alpha: .4)
+          : tokens.heroForeground.withValues(alpha: .5),
       backgroundColor: primary
-          ? tokens.heroActionBackground
+          ? (empty ? primaryColor : tokens.heroActionBackground)
+          : empty
+          ? colors.surface.withValues(alpha: .55)
           : tokens.heroForeground.withValues(alpha: .08),
       height: 48,
       width: double.infinity,
@@ -450,7 +470,9 @@ class TodayWorkoutCard extends StatelessWidget {
         color: background,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant,
+          color: empty
+              ? primaryColor.withValues(alpha: .22)
+              : colors.outlineVariant,
           width: tokens.borderWidth,
         ),
       ),
@@ -460,7 +482,7 @@ class TodayWorkoutCard extends StatelessWidget {
           Text(
             "TODAY'S WORKOUT",
             style: TextStyle(
-              color: tokens.mintTint,
+              color: empty ? primaryColor : tokens.mintTint,
               fontSize: 11,
               letterSpacing: .9,
               fontWeight: FontWeight.w700,
@@ -470,7 +492,7 @@ class TodayWorkoutCard extends StatelessWidget {
           Text(
             title ?? 'Nothing planned yet',
             style: TextStyle(
-              color: tokens.heroForeground,
+              color: foreground,
               fontSize: 22,
               fontWeight: FontWeight.w800,
               height: 1.15,
@@ -479,10 +501,7 @@ class TodayWorkoutCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             detail ?? 'Choose a routine for today or schedule one for later.',
-            style: TextStyle(
-              color: tokens.heroForeground.withValues(alpha: .82),
-              fontSize: 13,
-            ),
+            style: TextStyle(color: secondaryForeground, fontSize: 13),
           ),
           if (badges.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -503,7 +522,7 @@ class TodayWorkoutCard extends StatelessWidget {
                     child: Text(
                       badge,
                       style: TextStyle(
-                        color: tokens.heroForeground,
+                        color: foreground,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
@@ -530,11 +549,11 @@ class TodayWorkoutCard extends StatelessWidget {
             children: [
               Text(
                 'This week',
-                style: TextStyle(color: tokens.heroForeground, fontSize: 12),
+                style: TextStyle(color: foreground, fontSize: 12),
               ),
               Text(
                 '$weeklyCount of $weeklyGoal workouts',
-                style: TextStyle(color: tokens.heroForeground, fontSize: 12),
+                style: TextStyle(color: foreground, fontSize: 12),
               ),
             ],
           ),
@@ -549,7 +568,7 @@ class TodayWorkoutCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: index < completedCount
                           ? tokens.mintTint
-                          : tokens.heroForeground.withValues(alpha: .24),
+                          : foreground.withValues(alpha: .24),
                       borderRadius: BorderRadius.circular(99),
                     ),
                   ),

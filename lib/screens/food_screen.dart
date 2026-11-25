@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../store/store.dart';
@@ -187,6 +189,7 @@ class FoodScreen extends StatelessWidget {
 
   Widget _mealCard(BuildContext context, Map meal, int index) {
     final description = meal['desc'] as String? ?? '';
+    final photoValidation = meal['photoValidation'];
     final rawIngredients = meal['ingredients'];
     final ingredients = rawIngredients is List
         ? rawIngredients
@@ -210,10 +213,13 @@ class FoodScreen extends StatelessWidget {
         children: [
           mealPicture(
             context,
-            image:
-                meal['imageUrl'] ??
-                meal['img'] ??
-                mealImageAssetFor((meal['n'] ?? '').toString()),
+            image: meal['localPhoto'] is String
+                ? 'data:image/jpeg;base64,${meal['localPhoto']}'
+                : meal['imageId'] is String
+                ? 'firestore://${meal['imageId']}'
+                : meal['imageUrl'] ??
+                      meal['img'] ??
+                      mealImageAssetFor((meal['n'] ?? '').toString()),
             name: meal['n'],
             type: meal['t'],
             size: 42,
@@ -239,6 +245,14 @@ class FoodScreen extends StatelessWidget {
                 if (description.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(description, style: muted),
+                ],
+                if (photoValidation is Map &&
+                    photoValidation['status'] is String) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Photo check · ${_photoValidationLabel(photoValidation['status'] as String)}',
+                    style: muted,
+                  ),
                 ],
                 if (ingredients.isNotEmpty) ...[
                   const SizedBox(height: 6),
@@ -280,6 +294,19 @@ class FoodScreen extends StatelessWidget {
       ),
     );
   }
+
+  String _photoValidationLabel(String status) => switch (status) {
+    'recognized' => 'food recognized',
+    'matched' => 'ingredients matched',
+    'mismatch' => 'ingredients differ',
+    'mismatch_accepted' => 'difference accepted',
+    'comparison_failed' => 'comparison unavailable',
+    'not_food' => 'not recognized as food',
+    'scan_failed' => 'scan failed',
+    'pending' => 'pending',
+    'not_scanned' => 'not scanned',
+    _ => 'unknown',
+  };
 
   Widget _macroTag(BuildContext context, String label, dynamic value) =>
       Container(

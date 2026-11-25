@@ -19,6 +19,9 @@ import 'package:fittract/widgets/shared_widgets.dart';
 Future<void> freshStore() async {
   SharedPreferences.setMockInitialValues({});
   await store.init();
+  if (activityTracking.hasSession) activityTracking.discard();
+  store.d['activeActivity'] = null;
+  store.saveQuiet();
 }
 
 /// Default test surface is 800x600, which leaves the tail of these screens
@@ -312,6 +315,7 @@ void main() {
       await freshStore();
       await tester.pumpWidget(
         MaterialApp(
+          key: UniqueKey(),
           home: Scaffold(
             body: Builder(
               builder: (context) => TextButton(
@@ -324,6 +328,7 @@ void main() {
       );
 
       await tester.tap(find.text('Open activity picker'));
+      await tester.pump();
       await tester.pumpAndSettle();
 
       expect(find.text('Cycling'), findsNothing);
@@ -331,48 +336,42 @@ void main() {
       expect(find.text('Yoga'), findsNothing);
       expect(find.text('Brisk walk'), findsOneWidget);
       expect(find.text('Running'), findsOneWidget);
+      Navigator.of(tester.element(find.text('Log an activity'))).pop();
+      await tester.pumpAndSettle();
     });
 
-    testWidgets('activity sheet keeps manual logging as an alternate flow', (
-      tester,
-    ) async {
-      await freshStore();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => TextButton(
-                onPressed: () => showLogActivity(context),
-                child: const Text('Open activity picker'),
+    testWidgets(
+      'activity sheet starts tracked activity without manual logging',
+      (tester) async {
+        await freshStore();
+        expect(activityTracking.hasSession, isFalse);
+        await tester.pumpWidget(
+          MaterialApp(
+            key: UniqueKey(),
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => TextButton(
+                  onPressed: () => showLogActivity(context),
+                  child: const Text('Open activity picker'),
+                ),
               ),
             ),
           ),
-        ),
-      );
+        );
 
-      await tester.tap(find.text('Open activity picker'));
-      await tester.pumpAndSettle();
-      expect(find.text('Duration'), findsNothing);
-      expect(find.text('Add manually instead'), findsOneWidget);
-      expect(find.text('kcal'), findsNothing);
-      expect(find.text('--'), findsNWidgets(3));
-
-      await tester.tap(find.text('Add manually instead'));
-      await tester.pumpAndSettle();
-      expect(find.text('Duration'), findsOneWidget);
-      expect(find.text('15 min'), findsOneWidget);
-      expect(find.text('Distance (km)'), findsOneWidget);
-      expect(find.text('Save activity'), findsOneWidget);
-
-      await tester.ensureVisible(find.text('Save activity'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Save activity'));
-      await tester.pumpAndSettle();
-      expect(store.acts, hasLength(1));
-      expect(store.acts.single['n'], 'Brisk walk');
-      expect(store.acts.single['min'], 30);
-      expect(store.acts.single['t'], isA<num>());
-    });
+        await tester.tap(find.text('Open activity picker'));
+        await tester.pump();
+        await tester.pumpAndSettle();
+        expect(find.text('Duration'), findsNothing);
+        expect(find.text('Add manually instead'), findsNothing);
+        expect(find.text('kcal'), findsNothing);
+        expect(find.text('Start'), findsOneWidget);
+        expect(find.text('--'), findsNWidgets(3));
+        expect(store.acts, isEmpty);
+        Navigator.of(tester.element(find.text('Log an activity'))).pop();
+        await tester.pumpAndSettle();
+      },
+    );
 
     testWidgets('tracked activity stops, accepts distance, and saves', (
       tester,
@@ -395,6 +394,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          key: UniqueKey(),
           home: Scaffold(
             body: Builder(
               builder: (context) => TextButton(
@@ -407,15 +407,19 @@ void main() {
       );
 
       await tester.tap(find.text('Open activity picker'));
+      await tester.pump();
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Start'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Start'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('Stop'), findsOneWidget);
-      expect(find.text('GPS off, distance will be estimated'), findsOneWidget);
+      expect(find.text('Location is off'), findsOneWidget);
       expect(find.text('Distance (km)'), findsNothing);
       expect(find.text('Running'), findsOneWidget);
 
@@ -470,14 +474,19 @@ void main() {
       await activityTracking.start('Brisk walk');
       largeViewport(tester);
       await tester.pumpWidget(
-        const MaterialApp(home: Scaffold(body: ActivityScreen())),
+        MaterialApp(
+          key: UniqueKey(),
+          home: const Scaffold(body: ActivityScreen()),
+        ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('Tracking in progress'), findsOneWidget);
       expect(find.text('Log an activity'), findsOneWidget);
       await tester.tap(find.text('Tracking in progress'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Stop'), findsOneWidget);
       expect(find.text('Brisk walk'), findsOneWidget);
       activityTracking.discard();

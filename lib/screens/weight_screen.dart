@@ -4,10 +4,14 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../services/daily_movement_tracking_service.dart';
 import '../services/weight_estimator.dart';
+import '../services/weight_planner.dart';
 import '../store/store.dart';
 import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
+
+import '../widgets/ai_coach_card.dart';
 
 class WeightScreen extends StatefulWidget {
   const WeightScreen({super.key});
@@ -72,50 +76,53 @@ class _WeightState extends State<WeightScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => live((c) {
-    final series = WeightEstimator.calculate(store.d);
-    final todayDate = DateTime.now();
-    final todayKey = today();
-    final todayEntry = _findDay(series.days, todayKey);
-    final currentKg = todayEntry?.kg ?? series.currentWeightKg;
-    final visibleDays = series.days
-        .where(
-          (day) => !day.date.isBefore(
-            DateTime(
-              todayDate.year,
-              todayDate.month,
-              todayDate.day,
-            ).subtract(Duration(days: _rangeDays[_range] - 1)),
-          ),
-        )
-        .toList();
-    final change = _rangeChange(visibleDays);
-    final hasMealsToday = store.meals.isNotEmpty;
-    final age = store.d['age'];
-    final height = store.d['h'];
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: dailyMovementTracking,
+    builder: (context, _) => live((c) {
+      final series = WeightEstimator.calculate(store.d);
+      final todayDate = DateTime.now();
+      final todayKey = today();
+      final todayEntry = _findDay(series.days, todayKey);
+      final currentKg = todayEntry?.kg ?? series.currentWeightKg;
+      final visibleDays = series.days
+          .where(
+            (day) => !day.date.isBefore(
+              DateTime(
+                todayDate.year,
+                todayDate.month,
+                todayDate.day,
+              ).subtract(Duration(days: _rangeDays[_range] - 1)),
+            ),
+          )
+          .toList();
+      final change = _rangeChange(visibleDays);
+      final age = store.d['age'];
+      final height = store.d['h'];
 
-    return screen([
-      hdr(c, 'Weight & goals', 'Stronger, steadily.', back: true),
-      if (!series.hasAnchor)
-        _setupCard(c)
-      else ...[
-        _estimatedCard(
-          c,
-          series: series,
-          currentKg: currentKg,
-          todayDate: todayDate,
-          visibleDays: visibleDays,
-          change: change,
-          todayEntry: todayEntry,
-          hasMealData: hasMealsToday,
-          profileIsIncomplete: age == null || height == null,
-        ),
-        _manualWeighInCard(c),
-      ],
-      h3('Weight goals'),
-      _goalsCard(c, series.hasAnchor ? currentKg : 0),
-    ]);
-  });
+      return screen([
+        hdr(c, 'Weight & goals', 'Stronger, steadily.', back: true),
+        if (!series.hasAnchor)
+          _setupCard(c)
+        else ...[
+          _estimatedCard(
+            c,
+            series: series,
+            currentKg: currentKg,
+            todayDate: todayDate,
+            visibleDays: visibleDays,
+            change: change,
+            todayEntry: todayEntry,
+            profileIsIncomplete: age == null || height == null,
+          ),
+          _manualWeighInCard(c),
+        ],
+        h3('Weight goals'),
+        _goalsCard(c, series.hasAnchor ? currentKg : 0),
+        h3('AI coach'),
+        AiCoachCard(currentKg: series.hasAnchor ? currentKg : 0),
+      ]);
+    }),
+  );
 
   WeightEstimateDay? _findDay(List<WeightEstimateDay> days, String key) {
     for (final day in days) {
@@ -173,7 +180,6 @@ class _WeightState extends State<WeightScreen> {
     required List<WeightEstimateDay> visibleDays,
     required double? change,
     required WeightEstimateDay? todayEntry,
-    required bool hasMealData,
     required bool profileIsIncomplete,
   }) {
     final colors = Theme.of(context).colorScheme;
@@ -183,6 +189,7 @@ class _WeightState extends State<WeightScreen> {
     final dateText = DateFormat('EEE, MMM d').format(todayDate);
     final dailyDetails = visibleDays.reversed.toList();
     final chartLabel = _chartDescription(visibleDays);
+    final showTrendChart = WeightEstimator.hasEnoughTrendDays(visibleDays);
 
     return card(
       child: Column(
@@ -218,12 +225,7 @@ class _WeightState extends State<WeightScreen> {
             ],
           ),
           const SizedBox(height: kGapMd),
-          if (change == null)
-            Text(
-              'Not enough complete days in this range to show a change yet.',
-              style: muted,
-            )
-          else
+          if (change != null)
             Semantics(
               label:
                   '${change < 0 ? 'Down' : 'Up'} ${change.abs().toStringAsFixed(1)} kilograms ${_rangeLabels[_range]}',
@@ -267,12 +269,12 @@ class _WeightState extends State<WeightScreen> {
             ),
           ),
           const SizedBox(height: kGapLg),
-          if (visibleDays.isEmpty)
+          if (!showTrendChart)
             SizedBox(
               height: 185,
               child: Center(
                 child: Text(
-                  'No estimate points in this range yet.',
+                  'Log meals or exercise on at least 2 days in this range to see your trend',
                   style: muted,
                 ),
               ),
@@ -284,17 +286,6 @@ class _WeightState extends State<WeightScreen> {
               color: primaryOf(context),
             ),
           const SizedBox(height: kGapMd),
-          if (!hasMealData)
-            Padding(
-              padding: const EdgeInsets.only(bottom: kGapMd),
-              child: Text(
-                'Log your meals to improve your estimate',
-                style: TextStyle(
-                  color: primaryOf(context),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
           if (profileIsIncomplete)
             const Padding(
               padding: EdgeInsets.only(bottom: kGapMd),
@@ -405,9 +396,7 @@ class _WeightState extends State<WeightScreen> {
                   Expanded(
                     flex: 2,
                     child: _dailyValue(
-                      day.caloriesConsumed == null
-                          ? '--'
-                          : store.withThousands(day.caloriesConsumed!),
+                      store.withThousands(day.caloriesConsumed ?? 0),
                       'consumed',
                       primary,
                     ),
@@ -415,7 +404,7 @@ class _WeightState extends State<WeightScreen> {
                   Expanded(
                     flex: 2,
                     child: _dailyValue(
-                      store.withThousands(day.caloriesBurned),
+                      store.withThousands(day.activeCaloriesBurned),
                       'burned',
                       activityColor,
                     ),
@@ -496,6 +485,35 @@ class _WeightState extends State<WeightScreen> {
       children: [
         const Divider(height: 1),
         const SizedBox(height: 8),
+        _recordLine(
+          'Resting energy',
+          '${store.withThousands(day.restingCalories)} kcal',
+        ),
+        _recordLine(
+          'Other activity',
+          '${store.withThousands(day.activityCalories)} kcal',
+        ),
+        _recordLine('Steps', '${store.withThousands(day.stepCalories)} kcal'),
+        _recordLine(
+          'Exercise',
+          '${store.withThousands(day.caloriesBurned)} kcal',
+        ),
+        _recordLine(
+          'Total burned',
+          '${store.withThousands(day.totalBurnedCalories)} kcal',
+        ),
+        if (day.calorieBalance != null)
+          _recordLine(
+            'Calorie balance',
+            '${day.calorieBalance! >= 0 ? '+' : ''}${store.withThousands(day.calorieBalance!)} kcal',
+          )
+        else
+          _recordLine('Calorie balance', '--'),
+        _recordLine(
+          'Daily calorie target',
+          '${store.withThousands((store.nutritionGoals['calories'] as num).toInt())} kcal',
+        ),
+        const SizedBox(height: 8),
         Text(
           'Meals',
           style: TextStyle(color: primary, fontWeight: FontWeight.w700),
@@ -556,10 +574,14 @@ class _WeightState extends State<WeightScreen> {
     final entries = days
         .map(
           (day) =>
-              '${DateFormat('MMM d').format(day.date)}: ${day.kg.toStringAsFixed(1)} kilograms${day.complete ? '' : ', incomplete day'}',
+              '${DateFormat('MMM d').format(day.date)}: ${day.kg.toStringAsFixed(1)} kilograms${day.complete
+                  ? ''
+                  : day.activeCaloriesBurned > 0
+                  ? ', activity-only estimate'
+                  : ', no meal or exercise logged'}',
         )
         .join('; ');
-    return 'Estimated weight trend. $entries. Incomplete days do not change the estimate.';
+    return 'Estimated weight trend. $entries. Days without meal or activity logs carry the previous estimate.';
   }
 
   Widget _manualWeighInCard(BuildContext context) => card(
@@ -582,11 +604,18 @@ class _WeightState extends State<WeightScreen> {
         SizedBox(
           width: double.infinity,
           height: 48,
-          child: FilledButton.tonal(
+          child: FilledButton.icon(
             onPressed: _validWeight(_manualWeight.text)
                 ? () => _saveWeight(context)
                 : null,
-            child: const Text('Save weight'),
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save weight'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
           ),
         ),
       ],
@@ -655,6 +684,15 @@ class _WeightState extends State<WeightScreen> {
                       fontSize: 12,
                       height: 1.4,
                     ),
+                  ),
+                ],
+                if (pace.earliestSafeDate != null) ...[
+                  const SizedBox(height: kGapSm),
+                  TextButton(
+                    onPressed: () {
+                      _targetDate.text = isoOf(pace.earliestSafeDate!);
+                    },
+                    child: const Text('Use earliest safe date'),
                   ),
                 ],
               ],
@@ -746,146 +784,82 @@ class _WeightState extends State<WeightScreen> {
     );
   }
 
-  ({String message, String? warning}) _paceMessage(double currentKg) {
+  ({String message, String? warning, DateTime? earliestSafeDate}) _paceMessage(
+    double currentKg,
+  ) {
     final target = double.tryParse(_targetWeight.text.trim());
     if (target == null || !target.isFinite || target < 20 || target > 300) {
       return (
         message: 'Enter a target weight to see your pace.',
         warning: null,
+        earliestSafeDate: null,
       );
     }
-    if ((target - currentKg).abs() < .05) {
+    if (currentKg < 20 || currentKg > 300) {
+      return (
+        message: 'Start tracking your weight to see your projected date.',
+        warning: null,
+        earliestSafeDate: null,
+      );
+    }
+
+    final age = store.d['age'];
+    final height = store.d['h'];
+    if (age is! num ||
+        height is! num ||
+        age < 13 ||
+        age > 100 ||
+        height < 100 ||
+        height > 250) {
+      return (
+        message:
+            'Add your age and height in Profile to see your projected date.',
+        warning: null,
+        earliestSafeDate: null,
+      );
+    }
+    final sex = store.d['sex'];
+    final activity = store.d['activityLevel'];
+    final input = WeightPlanInput(
+      currentKg: currentKg,
+      targetKg: target,
+      ageYears: age.toInt(),
+      heightCm: height.toDouble(),
+      sex: sex is String ? sex : 'other',
+      activityLevel: activity is String ? activity : 'light',
+      workoutsPerWeek: store.weeklyWorkoutGoal,
+      targetDate: DateTime.tryParse(_targetDate.text.trim()),
+    );
+    final plan = WeightPlanner.build(input);
+    final warning = plan.warnings.isEmpty ? null : plan.warnings.join(' ');
+    final earliestSafeDate = WeightPlanner.hasUnsafeTargetDate(plan)
+        ? plan.projectedDate
+        : null;
+    if (plan.goalType == WeightGoalType.maintain) {
       return (
         message: 'You are at your target. Keep it steady.',
-        warning: null,
+        warning: warning,
+        earliestSafeDate: null,
       );
     }
 
-    final todayDate = DateTime.now();
-    final goalDate = DateTime.tryParse(_targetDate.text);
-    final pace = _recentPace();
-    final daysUntilGoal = goalDate == null
-        ? null
-        : DateTime(goalDate.year, goalDate.month, goalDate.day)
-              .difference(
-                DateTime(todayDate.year, todayDate.month, todayDate.day),
-              )
-              .inDays;
-    final gainingGoal = target > currentKg;
-
-    if (gainingGoal) {
-      if (daysUntilGoal == null || daysUntilGoal <= 0) {
-        return (
-          message: 'Choose a future target date to see your gaining pace.',
-          warning: daysUntilGoal != null
-              ? 'Choose a future date for a gradual, realistic goal.'
-              : null,
-        );
-      }
-      final requiredWeeklyChange = (target - currentKg) * 7 / daysUntilGoal;
-      final surplus =
-          ((target - currentKg) * WeightEstimator.kcalPerKg / daysUntilGoal)
-              .round();
+    final projected = plan.projectedDate;
+    if (projected == null) {
       return (
-        message:
-            'To reach ${target.toStringAsFixed(1)} kg by your date, aim for about ${NumberFormat('#,##0').format(surplus)} kcal/day above what you burn.',
-        warning: requiredWeeklyChange > 1
-            ? 'That is a very ambitious pace. Consider a later target date for gradual progress.'
-            : null,
+        message: 'Choose a target date to see your required pace.',
+        warning: warning,
+        earliestSafeDate: null,
       );
     }
-
-    final loss = currentKg - target;
-    if (pace == null) {
-      return (
-        message: 'Log meals on at least 2 different days in the last 14 to see your pace.',
-        warning: null,
-      );
-    }
-    final ratePerDay = pace;
-    final projectedDate = ratePerDay < 0
-        ? DateTime.now().add(
-            Duration(days: max(0, (loss / -ratePerDay).round())),
-          )
-        : null;
-    final isOnTrack =
-        goalDate != null &&
-        daysUntilGoal != null &&
-        daysUntilGoal > 0 &&
-        projectedDate != null &&
-        !projectedDate.isAfter(
-          DateTime(goalDate.year, goalDate.month, goalDate.day),
-        );
-    final requiredWeeklyChange = daysUntilGoal != null && daysUntilGoal > 0
-        ? loss * 7 / daysUntilGoal
-        : 0.0;
-    final unrealistic = requiredWeeklyChange > 1;
-
-    if (isOnTrack || (goalDate == null && projectedDate != null)) {
-      return (
-        message:
-            'On track. At your current pace you will reach ${target.toStringAsFixed(1)} kg around ${DateFormat('MMM d, yyyy').format(projectedDate)}.',
-        warning: ratePerDay.abs() * 7 > 1
-            ? 'Your recent pace is faster than about 1 kg per week. Consider a gentler goal.'
-            : null,
-      );
-    }
-    if (daysUntilGoal == null) {
-      return (
-        message: 'At your current pace, your goal is not yet moving in the right direction. Choose a target date to see a realistic plan.',
-        warning: null,
-      );
-    }
-    if (daysUntilGoal <= 0) {
-      return (
-        message: 'Your target date has passed. Choose a future date for a gradual plan.',
-        warning: null,
-      );
-    }
-
-    final requiredNetCalories =
-        -loss * WeightEstimator.kcalPerKg / daysUntilGoal;
-    final currentNetCalories = ratePerDay * WeightEstimator.kcalPerKg;
-    final additionalDeficit = max(
-      0,
-      (currentNetCalories - requiredNetCalories).round(),
-    );
-    final projected = projectedDate == null
-        ? null
-        : DateFormat('MMM d, yyyy').format(projectedDate);
-    if (additionalDeficit > 500) {
-      return (
-        message: projected == null
-            ? 'At your current pace you are not yet moving toward ${target.toStringAsFixed(1)} kg. Reaching it by your target date would require an aggressive deficit.'
-            : 'At your current pace you will reach ${target.toStringAsFixed(1)} kg around $projected, after your target date. Reaching it by your date would require an aggressive deficit.',
-        warning: 'Consider a later target date rather than cutting calories drastically. FitTrack does not recommend extreme restriction.',
-      );
-    }
+    final requiredRate = plan.requestedWeeklyChangeKg;
+    final message = requiredRate == null
+        ? 'At a safe rate of ${plan.weeklyChangeKg.abs().toStringAsFixed(2)} kg per week, your plan reaches ${target.toStringAsFixed(1)} kg around ${WeightPlanner.formatDate(projected)}.'
+        : 'Reaching ${target.toStringAsFixed(1)} kg by your date requires ${requiredRate.toStringAsFixed(2)} kg per week. Your plan reaches it around ${WeightPlanner.formatDate(projected)}.';
     return (
-      message: projected == null
-          ? 'At your current pace you are not yet moving toward ${target.toStringAsFixed(1)} kg. You would need about ${NumberFormat('#,##0').format(additionalDeficit)} kcal/day less than you burn.'
-          : 'At your current pace you will reach ${target.toStringAsFixed(1)} kg around $projected, after your target date. You would need about ${NumberFormat('#,##0').format(additionalDeficit)} kcal/day less than you burn.',
-      warning: unrealistic
-          ? 'This target is more than about 1 kg per week. Consider a gentler pace and a later target date.'
-          : null,
+      message: message,
+      warning: warning,
+      earliestSafeDate: earliestSafeDate,
     );
-  }
-
-  double? _recentPace() {
-    final series = WeightEstimator.calculate(store.d);
-    final start = DateTime.now().subtract(const Duration(days: 14));
-    final points = series.days
-        .where(
-          (day) =>
-              day.complete &&
-              !day.anchor &&
-              !day.date.isBefore(DateTime(start.year, start.month, start.day)),
-        )
-        .toList();
-    if (points.length < 2) return null;
-    final elapsedDays = points.last.date.difference(points.first.date).inDays;
-    if (elapsedDays == 0) return null;
-    return (points.last.kg - points.first.kg) / elapsedDays;
   }
 
   Future<void> _pickGoalDate(BuildContext context) async {
@@ -901,17 +875,91 @@ class _WeightState extends State<WeightScreen> {
     setState(() => _targetDate.text = isoOf(picked));
   }
 
+  WeightPlan? _planForGoalDate(double target, DateTime date) {
+    final series = WeightEstimator.calculate(store.d);
+    final currentKg = series.currentWeightKg;
+    final age = store.d['age'];
+    final height = store.d['h'];
+    if (!series.hasAnchor ||
+        currentKg < 20 ||
+        currentKg > 300 ||
+        age is! num ||
+        age < 13 ||
+        age > 100 ||
+        height is! num ||
+        height < 100 ||
+        height > 250) {
+      return null;
+    }
+
+    final sex = store.d['sex'];
+    final activity = store.d['activityLevel'];
+    final input = WeightPlanInput(
+      currentKg: currentKg,
+      targetKg: target,
+      ageYears: age.toInt(),
+      heightCm: height.toDouble(),
+      sex: sex is String ? sex : 'other',
+      activityLevel: activity is String ? activity : 'light',
+      workoutsPerWeek: store.weeklyWorkoutGoal,
+      targetDate: date,
+    );
+    try {
+      return WeightPlanner.build(input);
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  bool _isTodayOrFutureDate(DateTime date) {
+    final todayDate = DateTime.now();
+    return !DateTime(
+      date.year,
+      date.month,
+      date.day,
+    ).isBefore(DateTime(todayDate.year, todayDate.month, todayDate.day));
+  }
+
+  String? _unsafeDateMessage(double? target, DateTime date) {
+    if (target == null) return null;
+    final plan = _planForGoalDate(target, date);
+    if (plan == null) return null;
+    return WeightPlanner.unsafeTargetDateMessage(
+      requestedWeeklyChangeKg: plan.requestedWeeklyChangeKg,
+      safeWeeklyChangeKg: WeightPlanner.safeWeeklyRate(plan.goalType),
+      projectedDate: plan.projectedDate,
+    );
+  }
+
   void _saveValidGoalFields() {
     final target = double.tryParse(_targetWeight.text.trim());
+    final goalTarget =
+        target != null && target.isFinite && target >= 20 && target <= 300
+        ? target
+        : store.goalField('w');
     final date = _targetDate.text.trim();
     var changed = false;
     if (target != null && target.isFinite && target >= 20 && target <= 300) {
       store.ensureGoal()['w'] = target;
       changed = true;
     }
-    if (date.isNotEmpty && DateTime.tryParse(date) != null) {
-      store.ensureGoal()['d'] = date;
+    if (date.isEmpty && store.goal['d'] != '') {
+      store.ensureGoal()['d'] = '';
       changed = true;
+    } else if (date.isNotEmpty) {
+      final parsedDate = DateTime.tryParse(date);
+      if (parsedDate != null) {
+        final dateIsSafe =
+            _isTodayOrFutureDate(parsedDate) &&
+            _unsafeDateMessage(goalTarget, parsedDate) == null;
+        if (dateIsSafe) {
+          store.ensureGoal()['d'] = date;
+          changed = true;
+        } else if (store.goal['d'] != '') {
+          store.ensureGoal()['d'] = '';
+          changed = true;
+        }
+      }
     }
     if (changed) store.save();
   }
@@ -957,10 +1005,37 @@ class _WeightState extends State<WeightScreen> {
       snack(context, 'Choose a valid target date.');
       return;
     }
+    final parsedDate = date.isEmpty ? null : DateTime.parse(date);
+    final dateIsAllowed =
+        parsedDate == null || _isTodayOrFutureDate(parsedDate);
+    final unsafeDateMessage = parsedDate == null
+        ? null
+        : _unsafeDateMessage(target, parsedDate);
     store.ensureGoal()['w'] = target ?? 0.0;
-    store.ensureGoal()['d'] = date;
+    if (dateIsAllowed && unsafeDateMessage == null) {
+      store.ensureGoal()['d'] = date;
+    } else {
+      store.ensureGoal()['d'] = '';
+    }
     store.save();
-    snack(context, 'Goals saved.');
+    if (!dateIsAllowed) {
+      snack(
+        context,
+        'Target weight saved. Choose a future date; this date was not saved.',
+      );
+    } else if (unsafeDateMessage != null) {
+      snack(
+        context,
+        'Target weight saved. $unsafeDateMessage Use the earliest safe date instead.',
+      );
+    } else {
+      snack(
+        context,
+        parsedDate != null && DateUtils.isSameDay(parsedDate, DateTime.now())
+            ? 'Goals saved. Choose a future date for a weight-change goal.'
+            : 'Goals saved.',
+      );
+    }
   }
 }
 
@@ -983,9 +1058,7 @@ class _WeightChart extends StatelessWidget {
     final spread = max(.5, high - low);
     final minY = low - spread * .2;
     final maxY = high + spread * .2;
-    final labels = days.length == 1
-        ? [days.first, days.first, days.first]
-        : [days.first, days[days.length ~/ 2], days.last];
+    final labelIndices = _dateLabelIndices(days.length);
 
     return Semantics(
       label: description,
@@ -1033,16 +1106,34 @@ class _WeightChart extends StatelessWidget {
             ),
             const SizedBox(height: kGapSm),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  DateFormat('MMM d').format(labels.first.date),
-                  style: muted,
-                ),
-                Text(DateFormat('MMM d').format(labels[1].date), style: muted),
-                Text(
-                  DateFormat('MMM d').format(labels.last.date),
-                  style: muted,
+                const SizedBox(width: 52),
+                Expanded(
+                  child: SizedBox(
+                    height: 18,
+                    child: Stack(
+                      children: [
+                        for (final index in labelIndices)
+                          Positioned.fill(
+                            child: Align(
+                              alignment: index == 0
+                                  ? Alignment.centerLeft
+                                  : index == days.length - 1
+                                  ? Alignment.centerRight
+                                  : Alignment(
+                                      2 * index / (days.length - 1) - 1,
+                                      0,
+                                    ),
+                              child: Text(
+                                DateFormat('MMM d').format(days[index].date),
+                                style: muted,
+                                maxLines: 1,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1050,6 +1141,15 @@ class _WeightChart extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<int> _dateLabelIndices(int count) {
+    if (count <= 1) return [0];
+    final labelCount = count > 14 ? 5 : 3;
+    return {
+      for (var index = 0; index < labelCount; index++)
+        (index * (count - 1) / (labelCount - 1)).round(),
+    }.toList();
   }
 }
 
@@ -1097,18 +1197,25 @@ class _WeightChartPainter extends CustomPainter {
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
-    for (var index = 1; index < points.length; index++) {
-      if (days[index - 1].complete && days[index].complete) {
-        canvas.drawLine(points[index - 1], points[index], line);
+    int? previousTrendPoint;
+    for (var index = 0; index < points.length; index++) {
+      if (!days[index].contributesToTrend) continue;
+      if (previousTrendPoint != null) {
+        canvas.drawLine(points[previousTrendPoint], points[index], line);
       }
+      previousTrendPoint = index;
     }
 
     for (var index = 0; index < points.length; index++) {
       final isToday = days[index].dateKey == todayKey;
-      final dotColor = days[index].complete ? color : incompleteColor;
+      final dotColor = days[index].complete
+          ? color
+          : days[index].activeCaloriesBurned > 0
+          ? color.withValues(alpha: .65)
+          : incompleteColor;
       canvas.drawCircle(
         points[index],
-        isToday ? 5 : 3.5,
+        isToday ? 6 : 4.5,
         Paint()..color = dotColor,
       );
       if (isToday) {

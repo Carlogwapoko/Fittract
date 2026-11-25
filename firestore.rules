@@ -1,6 +1,7 @@
 rules_version = '2';
 
-// Fittract user data lives in a single document per user: users/{uid}.
+// Fittract account data lives at users/{uid}; food photos are separate
+// documents under users/{uid}/foodImages so the account snapshot stays small.
 //
 // Access rules:
 //   - Only the authenticated owner may read or write their document.
@@ -30,6 +31,24 @@ service cloud.firestore {
         && request.resource.data.data.size() < 200;
 
       allow delete: if false;
+
+      match /foodImages/{imageId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+
+        allow create, update: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly([
+               'imageData', 'contentType', 'createdAt'
+             ])
+          && request.resource.data.imageData is string
+          && request.resource.data.imageData.size() < 950000
+          && request.resource.data.contentType is string
+          && request.resource.data.contentType.matches('image/.*')
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdAt > 0;
+
+        allow delete: if request.auth != null && request.auth.uid == uid;
+      }
     }
 
     // Any other path is denied by default (no matching rule).

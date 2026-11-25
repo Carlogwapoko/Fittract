@@ -21,10 +21,9 @@ class AuthScreen extends StatefulWidget {
   State<AuthScreen> createState() => _AuthState();
 }
 
-class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
+class _AuthState extends State<AuthScreen> {
   bool reg = false, agree = false;
   bool googleBusy = false, emailBusy = false;
-  bool _googleAuthWasBackgrounded = false;
   bool _obscurePw = true;
   int _googleAttempt = 0;
   String err = '';
@@ -35,34 +34,11 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
       pw = TextEditingController();
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     nm.dispose();
     em.dispose();
     pw.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
-      _googleAuthWasBackgrounded = true;
-      return;
-    }
-
-    if (state == AppLifecycleState.resumed && _googleAuthWasBackgrounded) {
-      _googleAuthWasBackgrounded = false;
-      if (googleBusy && mounted) {
-        setState(() => googleBusy = false);
-      }
-    }
   }
 
   String _messageFor(AuthResult result) => switch (result) {
@@ -175,17 +151,15 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
       notice = '';
     });
     try {
-      final credential = await googleAuth.signIn();
+      final account = await googleAuth.signIn();
       if (!mounted || attempt != _googleAttempt) return;
-      final user = credential.user;
-      if (user == null) {
-        throw StateError('Google sign-in did not return an account.');
-      }
       store.activateGoogleAccount(
-        uid: user.uid,
-        email: user.email ?? '',
-        displayName: user.displayName ?? nm.text,
-        photoUrl: user.photoURL,
+        uid: account.uid,
+        email: account.email,
+        displayName: account.displayName.isEmpty
+            ? nm.text
+            : account.displayName,
+        photoUrl: account.photoUrl,
       );
     } on GoogleSignInException catch (error) {
       _showGoogleError(googleAuthErrorMessage(error), attempt);
@@ -311,7 +285,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
     ),
   );
 
-  ButtonStyle _agreementLinkStyle(BuildContext context) =>
+  ButtonStyle _toggleLinkStyle(BuildContext context) =>
       _linkStyle(context).copyWith(
         textStyle: const WidgetStatePropertyAll(
           TextStyle(
@@ -320,6 +294,23 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
             decoration: TextDecoration.none,
           ),
         ),
+      );
+
+  ButtonStyle _agreementLinkStyle(BuildContext context) =>
+      _toggleLinkStyle(context).copyWith(
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        minimumSize: const WidgetStatePropertyAll(Size(0, 36)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 2),
+        ),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
       );
 
   Future<void> _openLegalLink(String url) async {
@@ -398,30 +389,24 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
     crossAxisAlignment: CrossAxisAlignment.center,
     children: [
       SizedBox(
-        width: 44,
-        height: 44,
+        width: 40,
+        height: 40,
         child: Center(
-          child: Transform.scale(
-            scale: 1.2,
-            child: Checkbox(
-              key: const ValueKey('terms-checkbox'),
-              value: agree,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onChanged: (value) => setState(() => agree = value ?? false),
-            ),
+          child: Checkbox(
+            key: const ValueKey('terms-checkbox'),
+            value: agree,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            onChanged: (value) => setState(() => agree = value ?? false),
           ),
         ),
       ),
-      const SizedBox(width: 8),
+      const SizedBox(width: 4),
       Expanded(
         child: Wrap(
           key: const ValueKey('terms-agreement-row'),
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 6),
-              child: Text('I agree to the ', style: TextStyle(fontSize: 14)),
-            ),
+            const Text('I agree to the ', style: TextStyle(fontSize: 14)),
             TextButton(
               key: const ValueKey('terms-agreement-link'),
               style: _agreementLinkStyle(context),
@@ -455,7 +440,8 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Container(
-                    height: 150,
+                    key: const ValueKey('login-hero-card'),
+                    height: MediaQuery.sizeOf(context).width < 360 ? 160 : 150,
                     padding: const EdgeInsets.all(kGapXl),
                     clipBehavior: Clip.antiAlias,
                     decoration: BoxDecoration(
@@ -469,45 +455,49 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                    child: Stack(
+                    child: Row(
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '▲ FITTRACK',
-                              style: TextStyle(
-                                color: appTokensOf(context).mintTint,
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: .6,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '▲ FITTRACK',
+                                style: TextStyle(
+                                  color: appTokensOf(context).mintTint,
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: .6,
+                                ),
                               ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              reg
-                                  ? 'Build a routine.\nFind your rhythm.'
-                                  : 'Small steps.\nStronger you.',
-                              style: TextStyle(
-                                color: appTokensOf(context).heroForeground,
-                                fontSize: 27,
-                                fontWeight: FontWeight.w800,
-                                height: 1.08,
+                              const Spacer(),
+                              Text(
+                                reg
+                                    ? 'Build a routine.\nFind your rhythm.'
+                                    : 'Small steps.\nStronger you.',
+                                key: const ValueKey('login-hero-slogan'),
+                                style: TextStyle(
+                                  color: appTokensOf(context).heroForeground,
+                                  fontSize: switch (MediaQuery.sizeOf(context)
+                                      .width) {
+                                    < 360 => 14,
+                                    < 400 => 15,
+                                    _ => 24,
+                                  },
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.08,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        Positioned(
-                          right: -14,
-                          bottom: -27,
-                          child: IgnorePointer(
-                            child: SvgPicture.asset(
-                              'assets/images/progress_rings.svg',
-                              width: 112,
-                              height: 112,
-                              semanticsLabel: 'Decorative progress rings',
-                            ),
+                            ],
                           ),
+                        ),
+                        const SizedBox(width: kGapSm),
+                        SvgPicture.asset(
+                          'assets/images/progress_rings.svg',
+                          key: const ValueKey('login-progress-rings'),
+                          width: 80,
+                          height: 80,
+                          semanticsLabel: 'Decorative progress rings',
                         ),
                       ],
                     ),
@@ -574,7 +564,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
-                        style: _linkStyle(context),
+                        style: _toggleLinkStyle(context),
                         onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => ForgotPasswordScreen(
@@ -718,11 +708,15 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                                     semanticsLabel: 'Google',
                                   ),
                                   const SizedBox(width: 12),
-                                  const Text(
-                                    'Continue with Google',
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
+                                  Flexible(
+                                    child: Text(
+                                      'Continue with Google',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -733,7 +727,7 @@ class _AuthState extends State<AuthScreen> with WidgetsBindingObserver {
                   const Spacer(),
                   Center(
                     child: TextButton(
-                      style: _linkStyle(context),
+                      style: _toggleLinkStyle(context),
                       onPressed: () => setState(() {
                         reg = !reg;
                         agree = false;

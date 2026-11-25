@@ -1,12 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import '../store/store.dart';
 import '../theme/app_palette.dart';
-
-const _palettePreferenceKey = 'ft_palette';
-const _darkModePreferenceKey = 'ft_dark_mode';
 
 class ThemeController extends ChangeNotifier {
   ThemeController(this._store) {
@@ -35,9 +30,6 @@ class ThemeController extends ChangeNotifier {
     if (!AppPalette.all.any((palette) => palette.id == id)) return;
     _previewOriginalId = null;
     _selectedPaletteId = id;
-    if (_store.isInitialized) {
-      unawaited(_store.sp.setString(_palettePreferenceKey, id));
-    }
     if (_store.d['palette'] == id) {
       notifyListeners();
       return;
@@ -57,11 +49,9 @@ class ThemeController extends ChangeNotifier {
   void resetToDefault() => previewPalette(AppPalette.teal.id);
 
   void setDarkMode(bool enabled) {
-    if (_store.isInitialized) {
-      unawaited(_store.sp.setBool(_darkModePreferenceKey, enabled));
-    }
     if (_store.d['dark'] == enabled && _darkMode == enabled) return;
     _store.d['dark'] = enabled;
+    _darkMode = enabled;
     _store.save();
   }
 
@@ -88,31 +78,15 @@ class ThemeController extends ChangeNotifier {
   }
 
   bool _savedDarkMode() {
-    if (_store.isInitialized) {
-      final saved = _store.sp.getBool(_darkModePreferenceKey);
-      if (saved != null) return saved;
-      final legacy = _store.d['dark'] == true;
-      unawaited(_store.sp.setBool(_darkModePreferenceKey, legacy));
-      return legacy;
-    }
     return _store.d['dark'] == true;
   }
 
   AppPalette _savedPalette() {
-    final savedId = _store.isInitialized
-        ? _store.sp.getString(_palettePreferenceKey)
-        : null;
-    final id = savedId ?? _store.d['palette'];
+    final id = _store.d['palette'];
     final palette = AppPalette.byId(id is String ? id : null);
-    if (_store.isInitialized && savedId == null) {
-      unawaited(_store.sp.setString(_palettePreferenceKey, palette.id));
-    }
     if (id is String && id != palette.id) {
       final updateStore = _store.d['palette'] != palette.id;
       _store.d['palette'] = palette.id;
-      if (_store.isInitialized) {
-        unawaited(_store.sp.setString(_palettePreferenceKey, palette.id));
-      }
       if (updateStore) _store.save();
     }
     return palette;

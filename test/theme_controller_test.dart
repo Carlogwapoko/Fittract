@@ -34,16 +34,15 @@ void main() {
     ]);
   });
 
-  test('choosing a palette updates the controller and persists', () async {
+  test('choosing a palette persists in the account snapshot', () async {
     controller.applyPalette('sage_mist');
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.selectedPaletteId, 'sage_mist');
     expect(testStore.d['palette'], 'sage_mist');
 
-    final preferences = await SharedPreferences.getInstance();
-    expect(preferences.getString('ft_palette'), 'sage_mist');
-    expect(preferences.getString('ft'), contains('"palette":"sage_mist"'));
+    final saved = await testStore.readStoredAccount('ft');
+    expect(saved?['palette'], 'sage_mist');
   });
 
   test('the saved palette is loaded on startup', () async {
@@ -65,9 +64,6 @@ void main() {
     testStore.d['palette'] = 'graphite';
     testStore.save();
     await Future<void>.delayed(Duration.zero);
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString('ft_palette', 'graphite');
-
     final reloadedStore = Store();
     await reloadedStore.init();
     final reloadedController = ThemeController(reloadedStore);
@@ -86,34 +82,28 @@ void main() {
     expect(testStore.d['palette'], AppPalette.teal.id);
   });
 
-  test('dark mode and palette persist independently', () async {
+  test('dark mode and palette persist in the account snapshot', () async {
     controller.applyPalette('graphite');
     controller.setDarkMode(true);
     await Future<void>.delayed(Duration.zero);
 
     expect(controller.selectedPaletteId, 'graphite');
     expect(controller.darkMode, isTrue);
-    final preferences = await SharedPreferences.getInstance();
-    expect(preferences.getBool('ft_dark_mode'), isTrue);
-    expect(preferences.getString('ft_palette'), 'graphite');
+    final saved = await testStore.readStoredAccount('ft');
+    expect(saved?['dark'], isTrue);
+    expect(saved?['palette'], 'graphite');
 
     controller.setDarkMode(false);
     expect(controller.selectedPaletteId, 'graphite');
     expect(controller.darkMode, isFalse);
   });
 
-  test('unknown saved palette falls back to Teal', () async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString('ft_palette', 'unknown_palette');
+  test('unknown saved palette falls back to Teal', () {
+    testStore.d['palette'] = 'unknown_palette';
+    final fallbackController = ThemeController(testStore);
+    addTearDown(fallbackController.dispose);
 
-    final reloadedStore = Store();
-    await reloadedStore.init();
-    final reloadedController = ThemeController(reloadedStore);
-    addTearDown(reloadedController.dispose);
-    addTearDown(reloadedStore.dispose);
-
-    expect(reloadedController.selectedPaletteId, AppPalette.teal.id);
-    expect(reloadedStore.d['palette'], AppPalette.teal.id);
-    expect(preferences.getString('ft_palette'), AppPalette.teal.id);
+    expect(fallbackController.selectedPaletteId, AppPalette.teal.id);
+    expect(testStore.d['palette'], AppPalette.teal.id);
   });
 }

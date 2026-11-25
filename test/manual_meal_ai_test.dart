@@ -1,35 +1,54 @@
+import 'dart:async';
+
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as image;
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fittract/screens/meal_picker_screen.dart';
 import 'package:fittract/services/food_ai_service.dart';
+import 'package:fittract/store/store.dart';
 
 class _FakeFoodAiService implements FoodAiService {
   int nutritionCalls = 0;
+  int scanCalls = 0;
   bool failNextEstimate = false;
+  bool nutritionUnavailable = false;
+  bool omitBundledNutrition = false;
+  Completer<MealScanResult>? scanGate;
   final nutritionInputs = <List<MealIngredient>>[];
+  final scannedPhotos = <Uint8List>[];
 
   @override
   Future<Uint8List> compressPhoto(Uint8List imageBytes) async => imageBytes;
 
   @override
-  Future<MealScanResult> scanMeal(Uint8List jpegBytes) async =>
-      const MealScanResult(
-        isFood: true,
-        mealName: 'Egg and rice',
-        mealType: 'Lunch',
-        ingredients: [
-          MealIngredient(name: 'Egg', amount: 2, unit: 'pcs'),
-          MealIngredient(name: 'Rice', amount: 150, unit: 'g'),
-        ],
-        nutrition: NutritionEstimate(
-          calories: 400,
-          protein: 25,
-          carbs: 55,
-          fat: 10,
-        ),
-      );
+  Future<MealScanResult> scanMeal(Uint8List jpegBytes) async {
+    scanCalls++;
+    scannedPhotos.add(Uint8List.fromList(jpegBytes));
+    final gate = scanGate;
+    if (gate != null) return gate.future;
+    return MealScanResult(
+      isFood: true,
+      mealName: 'Egg and rice',
+      mealType: 'Lunch',
+      ingredients: [
+        MealIngredient(name: 'Egg', amount: 2, unit: 'pcs'),
+        MealIngredient(name: 'Rice', amount: 150, unit: 'g'),
+      ],
+      nutrition: nutritionUnavailable || omitBundledNutrition
+          ? null
+          : const NutritionEstimate(
+              calories: 400,
+              protein: 25,
+              carbs: 55,
+              fat: 10,
+            ),
+      nutritionUnavailable: nutritionUnavailable,
+    );
+  }
 
   @override
   Future<NutritionEstimate> estimateNutrition(
@@ -94,7 +113,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: ManualMealScreen(aiService: ai)));
 
     expect(find.text('Ingredients'), findsOneWidget);
-    expect(find.text('USDA + GEMINI'), findsOneWidget);
+    expect(find.text('USDA + GEMINI'), findsNothing);
     expect(
       tester
           .widget<FilledButton>(
@@ -271,5 +290,289 @@ void main() {
       '180',
     );
     expect(find.text('Calories · Edited'), findsOneWidget);
+  });
+
+  testWidgets('Scan again reuses the selected photo without reopening camera', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'food_scan_privacy_notice_accepted_gemini': true,
+    });
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final ai = _FakeFoodAiService();
+    final sources = <ImageSource>[];
+    final imageBytes = Uint8List.fromList(
+      image.encodePng(image.Image(width: 1, height: 1)),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ManualMealScreen(
+          aiService: ai,
+          photoPicker: (source) async {
+            sources.add(source);
+            return XFile.fromData(imageBytes, name: 'food.png');
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Scan your food'));
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+    expect(sources, [ImageSource.camera]);
+    expect(ai.scanCalls, 1);
+
+    await tester.tap(find.text('Scan again'));
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+    expect(sources, [ImageSource.camera]);
+    expect(ai.scanCalls, 2);
+    expect(ai.scannedPhotos, hasLength(2));
+    expect(ai.scannedPhotos.last, orderedEquals(imageBytes));
+    expect(ai.scannedPhotos.first, orderedEquals(ai.scannedPhotos.last));
+  });
+
+  testWidgets('automatically scans a photo recovered after app restart', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'food_scan_privacy_notice_accepted_gemini': true,
+    });
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final ai = _FakeFoodAiService();
+    final imageBytes = Uint8List.fromList(
+      image.encodePng(image.Image(width: 1, height: 1)),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ManualMealScreen(
+          aiService: ai,
+          recoveredPhoto: XFile.fromData(imageBytes, name: 'food.png'),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(ai.scanCalls, 1);
+    expect(
+      tester.widget<TextField>(_field('Meal name')).controller!.text,
+      'Egg and rice',
+    );
+    expect(find.text('Scanning your food…'), findsNothing);
+  });
+
+  testWidgets('shows scan progress and applies the returned food details', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'food_scan_privacy_notice_accepted_gemini': true,
+    });
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final ai = _FakeFoodAiService()..scanGate = Completer<MealScanResult>();
+    final imageBytes = Uint8List.fromList(
+      image.encodePng(image.Image(width: 1, height: 1)),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ManualMealScreen(
+          aiService: ai,
+          photoPicker: (_) async =>
+              XFile.fromData(imageBytes, name: 'food.png'),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Scan your food'));
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+
+    expect(ai.scanCalls, 1);
+    expect(find.text('Scanning your food…'), findsWidgets);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    final scanButton = find.widgetWithText(FilledButton, 'Scan your food');
+    expect(scanButton, findsOneWidget);
+    expect(tester.widget<FilledButton>(scanButton).onPressed, isNull);
+    expect(
+      find.descendant(
+        of: scanButton,
+        matching: find.byIcon(Icons.camera_alt_outlined),
+      ),
+      findsOneWidget,
+    );
+
+    ai.scanGate!.complete(
+      const MealScanResult(
+        isFood: true,
+        mealName: 'Egg and rice',
+        mealType: 'Lunch',
+        ingredients: [
+          MealIngredient(name: 'Egg', amount: 2, unit: 'pcs'),
+          MealIngredient(name: 'Rice', amount: 150, unit: 'g'),
+        ],
+        nutrition: NutritionEstimate(
+          calories: 400,
+          protein: 25,
+          carbs: 55,
+          fat: 10,
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<TextField>(_field('Meal name')).controller!.text,
+      'Egg and rice',
+    );
+    expect(find.text('2 pcs'), findsOneWidget);
+    expect(find.text('150 g'), findsOneWidget);
+    expect(find.text('Scanning your food…'), findsNothing);
+    expect(ai.nutritionCalls, 0);
+  });
+
+  testWidgets(
+    'calculates nutrition immediately when scan has no bundled estimate',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'food_scan_privacy_notice_accepted_gemini': true,
+      });
+      tester.view.physicalSize = const Size(1100, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final ai = _FakeFoodAiService()..omitBundledNutrition = true;
+      final imageBytes = Uint8List.fromList(
+        image.encodePng(image.Image(width: 1, height: 1)),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ManualMealScreen(
+            aiService: ai,
+            photoPicker: (_) async =>
+                XFile.fromData(imageBytes, name: 'food.png'),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Scan your food'));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(ai.nutritionCalls, 1);
+      expect(
+        tester.widget<TextField>(_field('Calories')).controller!.text,
+        '350',
+      );
+      expect(find.text('Calculating nutrition…'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'keeps recognized meal and offers nutrition retry on enrichment failure',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'food_scan_privacy_notice_accepted_gemini': true,
+      });
+      tester.view.physicalSize = const Size(1100, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final ai = _FakeFoodAiService()..nutritionUnavailable = true;
+      final imageBytes = Uint8List.fromList(
+        image.encodePng(image.Image(width: 1, height: 1)),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ManualMealScreen(
+            aiService: ai,
+            photoPicker: (_) async =>
+                XFile.fromData(imageBytes, name: 'food.png'),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Scan your food'));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(_field('Meal name')).controller!.text,
+        'Egg and rice',
+      );
+      expect(
+        find.textContaining('Nutrition could not be calculated right now.'),
+        findsOneWidget,
+      );
+      expect(find.text('Try again'), findsOneWidget);
+      expect(ai.nutritionCalls, 0);
+    },
+  );
+
+  testWidgets('saves photo validation with the meal in local storage', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init(rollDay: false);
+    store.d['meals'] = <Map<String, dynamic>>[];
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(home: ManualMealScreen(aiService: _FakeFoodAiService())),
+    );
+
+    await tester.enterText(_field('Meal name'), 'Oatmeal');
+    await tester.enterText(_field('Calories'), '250');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(_field('Meal name')).controller!.text,
+      'Oatmeal',
+    );
+    expect(
+      tester.widget<TextField>(_field('Calories')).controller!.text,
+      '250',
+    );
+    final saveButton = find.widgetWithText(FilledButton, 'Add to food log');
+    await tester.ensureVisible(saveButton);
+    expect(tester.widget<FilledButton>(saveButton).onPressed, isNotNull);
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    final validation = (store.meals.single as Map)['photoValidation'] as Map;
+    expect(validation['status'], 'not_scanned');
+    expect(validation['acceptedByUser'], false);
+
+    final stored = await store.readStoredAccount('ft');
+    expect(stored, isNotNull);
+    expect(
+      ((stored!['meals'] as List).single as Map)['photoValidation'],
+      validation,
+    );
   });
 }

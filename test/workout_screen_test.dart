@@ -257,6 +257,26 @@ void main() {
     expect(find.byType(WorkoutScreen), findsNothing);
   });
 
+  testWidgets('workout calories use weight, duration, and routine intensity', (
+    tester,
+  ) async {
+    await freshStore();
+    store.d['weights'] = [
+      [today(), 72.0],
+    ];
+    final cardioRoutine = routine(type: 'Cardio')..['level'] = 'Beginner';
+    await pushScreen(tester, WorkoutScreen(cardioRoutine));
+    await tester.pump(const Duration(seconds: 30));
+
+    await tester.ensureVisible(find.text('Finish workout'));
+    await tester.tap(find.text('Finish workout'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Finish'));
+    await tester.pumpAndSettle();
+
+    expect(store.hist.single['kc'], 3);
+  });
+
   testWidgets('Today offers to resume a saved workout', (tester) async {
     await freshStore();
     store.d['activeW'] = {

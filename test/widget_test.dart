@@ -1,12 +1,23 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:image/image.dart' as image;
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fittract/main.dart';
+import 'package:fittract/screens/activity_screen.dart';
 import 'package:fittract/screens/food_screen.dart';
 import 'package:fittract/screens/profile_tab.dart';
+import 'package:fittract/screens/progress_tab.dart';
 import 'package:fittract/screens/today_tab.dart';
 import 'package:fittract/screens/weight_screen.dart';
+import 'package:fittract/services/weight_estimator.dart';
 import 'package:fittract/store/store.dart';
+import 'package:fittract/theme/app_palette.dart';
+import 'package:fittract/widgets/ai_coach_card.dart';
 import 'package:fittract/widgets/shared_widgets.dart';
 
 void _ignoreTab(int _) {}
@@ -22,6 +33,59 @@ Finder balanceValue(String value) => find.byWidgetPredicate(
 );
 
 void main() {
+  testWidgets('AI coach refreshes its cached plan after account hydration', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init(rollDay: false);
+    store.d['age'] = 35;
+    store.d['h'] = 172;
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: AiCoachCard(currentKg: 70))),
+    );
+    final description = find.text(
+      'Get a weekly workout schedule and nutrition tips from the AI coach, '
+      'based on your weight, goal and activity level.',
+    );
+    final coachingButton = find.widgetWithText(
+      FilledButton,
+      'Get AI coaching plan',
+    );
+    expect(coachingButton, findsOneWidget);
+    expect(find.byIcon(Icons.monitor_heart_rounded), findsNWidgets(2));
+    expect(find.byIcon(Icons.bolt_rounded), findsNWidgets(2));
+    expect(
+      tester.getTopLeft(coachingButton).dy -
+          tester.getBottomLeft(description).dy,
+      greaterThanOrEqualTo(kGapMd),
+    );
+
+    store.d['aiWeightPlan'] = {
+      'sig': 'stale-plan-signature',
+      'facts': 'Saved plan facts',
+      'plan': {
+        'summary': 'A restored coaching plan',
+        'workouts': [
+          {'day': 'Monday', 'focus': 'Full body', 'minutes': 30},
+        ],
+        'nutrition_tips': ['Include protein with meals.'],
+        'motivation': '',
+        'caution': '',
+      },
+    };
+    store.notifyListeners();
+    await tester.pump();
+
+    expect(
+      find.text(
+        'Out of date. Your goals changed, so this plan is hidden until refreshed.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Refresh AI plan'), findsOneWidget);
+  });
+
   test('New account data starts empty', () {
     final freshStore = Store()..d = Store().seed();
 
@@ -121,10 +185,26 @@ void main() {
   });
 
   testWidgets('App renders correctly', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init(rollDay: false);
     await tester.pumpWidget(const App());
     await tester.pumpAndSettle();
 
     expect(find.byType(App), findsOneWidget);
+    expect(find.text('Continue with Google'), findsOneWidget);
+    final hero = tester.getRect(find.byKey(const ValueKey('login-hero-card')));
+    final rings = tester.getRect(
+      find.byKey(const ValueKey('login-progress-rings')),
+    );
+    final slogan = tester.getRect(
+      find.byKey(const ValueKey('login-hero-slogan')),
+    );
+    expect(rings.left, greaterThanOrEqualTo(hero.left));
+    expect(rings.right, lessThanOrEqualTo(hero.right));
+    expect(rings.top, greaterThanOrEqualTo(hero.top));
+    expect(rings.bottom, lessThanOrEqualTo(hero.bottom));
+    expect(slogan.overlaps(rings), isFalse);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('Screen navigation uses an animated route', (
@@ -191,7 +271,7 @@ void main() {
     expect(darkApp.themeMode, ThemeMode.dark);
   });
 
-  testWidgets('Profile offers a personal detail editor without photo upload', (
+  testWidgets('Profile offers a personal detail editor', (
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -205,7 +285,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Add profile photo'), findsNothing);
     final editButton = find.textContaining('Edit personal details');
     await tester.ensureVisible(editButton);
     await tester.tap(editButton);
@@ -224,22 +303,112 @@ void main() {
     expect(store.d['weights'].single[0], today());
   });
 
-  testWidgets('Profile camera icon can be pressed without opening anything', (
+  testWidgets('Privacy password visibility toggles independently', (
     WidgetTester tester,
   ) async {
+    pbkdf2IterationsOverride = 1000;
+    addTearDown(() => pbkdf2IterationsOverride = 0);
     SharedPreferences.setMockInitialValues({});
-    await store.init();
+    await store.init(rollDay: false);
+    await tester.runAsync(() async {
+      await store.register(
+        name: 'Password User',
+        email: 'password@example.com',
+        password: 'pass1234',
+      );
+      await store.login(email: 'password@example.com', password: 'pass1234');
+    });
 
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: ProfileTab())),
     );
     await tester.pumpAndSettle();
 
+    final privacyTile = find.text('Privacy & account');
+    await tester.scrollUntilVisible(
+      privacyTile,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(privacyTile);
+    await tester.pumpAndSettle();
+    await tester.tap(privacyTile);
+    await tester.pumpAndSettle();
+
+    final passwordFields = find.byType(TextField);
+    expect(passwordFields, findsNWidgets(2));
+    expect(tester.widget<TextField>(passwordFields.at(0)).obscureText, isTrue);
+    expect(tester.widget<TextField>(passwordFields.at(1)).obscureText, isTrue);
+
+    await tester.enterText(passwordFields.at(0), 'current-password');
+    await tester.enterText(passwordFields.at(1), 'new-password');
+    await tester.tap(find.byTooltip('Show current password'));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<TextField>(passwordFields.at(0)).obscureText, isFalse);
+    expect(tester.widget<TextField>(passwordFields.at(1)).obscureText, isTrue);
+    expect(
+      tester.widget<TextField>(passwordFields.at(0)).controller!.text,
+      'current-password',
+    );
+
+    await tester.tap(find.byTooltip('Show new password'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(passwordFields.at(0)).obscureText, isFalse);
+    expect(tester.widget<TextField>(passwordFields.at(1)).obscureText, isFalse);
+
+    await tester.tap(find.byTooltip('Hide current password'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(passwordFields.at(0)).obscureText, isTrue);
+    expect(tester.widget<TextField>(passwordFields.at(1)).obscureText, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Profile camera icon selects and saves a profile photo', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    final imageBytes = Uint8List.fromList(
+      image.encodePng(image.Image(width: 2, height: 2)),
+    );
+    expect(image.decodeImage(imageBytes), isNotNull);
+    var pickerCalled = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProfileTab(
+            photoPicker: () async {
+              pickerCalled = true;
+              return XFile.fromData(imageBytes, name: 'profile.png');
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byIcon(Icons.camera_alt_outlined));
     await tester.pumpAndSettle();
 
+    expect(pickerCalled, isTrue);
+    expect(
+      store.d['profilePhoto'],
+      isNotNull,
+      reason: tester
+          .widgetList<SnackBar>(find.byType(SnackBar))
+          .map((snackBar) => snackBar.content.toString())
+          .join(', '),
+    );
+    final profilePhoto = store.d['profilePhoto'] as Map;
+    final savedPhoto = profilePhoto['localPhoto'] as String;
+    expect(image.decodeImage(base64Decode(savedPhoto)), isNotNull);
+    final stored = await store.readStoredAccount('ft');
+    expect(stored?['profilePhoto'], isNotNull);
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('Profile photo saved on this device.'), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    expect(find.byType(BottomSheet), findsNothing);
   });
 
   testWidgets('Today reminders offer actionable water and activity prompts', (
@@ -344,6 +513,14 @@ void main() {
     expect(find.text('Nothing planned yet'), findsOneWidget);
     expect(find.text('Choose a routine'), findsOneWidget);
     expect(find.text('Schedule a workout'), findsOneWidget);
+    final emptyCardTitle = find.text('Nothing planned yet');
+    final emptyCard = tester.widget<Container>(
+      find.ancestor(of: emptyCardTitle, matching: find.byType(Container)).first,
+    );
+    expect(
+      (emptyCard.decoration! as BoxDecoration).color,
+      appTokensOf(tester.element(emptyCardTitle)).softTint,
+    );
     expect(find.textContaining("Let's go, there"), findsNothing);
     await tester.tap(find.text('Choose a routine'));
     await tester.tap(find.text('Schedule a workout'));
@@ -622,6 +799,74 @@ void main() {
     expect(find.text('Every bit of movement counts.'), findsOneWidget);
   });
 
+  testWidgets('Daily steps card includes step and logged activity calories', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init(rollDay: false);
+    final date = today();
+    store.d['day'] = date;
+    store.d['h'] = 170;
+    store.d['weights'] = [
+      [date, 72.0],
+    ];
+    store.d['weightAnchorDate'] = date;
+    store.ensureGoal()['sw'] = 72.0;
+    store.d['steps'] = 5000;
+    store.acts.add({
+      'd': date,
+      'n': 'Brisk walk',
+      'min': 30,
+      'st': 2000,
+      'kc': 90,
+    });
+    store.save();
+
+    final expectedCalories = WeightEstimator.calculate(
+      Map<String, dynamic>.from(store.d),
+    ).days.last.activeCaloriesBurned;
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: ActivityScreen())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('${store.withThousands(expectedCalories)} kcal burned'),
+      findsOneWidget,
+    );
+    expect(expectedCalories, greaterThan(90));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Daily steps card labels the generic-weight calorie estimate', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init(rollDay: false);
+    store.d['day'] = today();
+    store.d['steps'] = 10000;
+    store.d['weights'] = <List<dynamic>>[];
+    store.ensureGoal()['sw'] = 0.0;
+    store.save();
+
+    final calories = WeightEstimator.stepCaloriesFor(
+      steps: 10000,
+      weightKg: 70,
+      heightCm: 170,
+    );
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: ActivityScreen())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('~${store.withThousands(calories)} kcal burned'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Add your weight in Profile'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Weight tracker starts estimating weight and saves goals', (
     WidgetTester tester,
   ) async {
@@ -668,12 +913,17 @@ void main() {
     );
     expect(find.text('Weight goals'), findsOneWidget);
 
+    final targetWeight = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Target weight',
+    );
     await tester.scrollUntilVisible(
-      find.text('Target weight'),
+      targetWeight,
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.enterText(find.byType(TextField).at(1), '72');
+    await tester.enterText(targetWeight, '72');
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Save goals'));
     await tester.pumpAndSettle();
@@ -700,15 +950,23 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
 
-    final targetWeight = find.byType(TextField).at(1);
+    final targetWeight = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Target weight',
+    );
+    await tester.ensureVisible(targetWeight);
+    await tester.tap(targetWeight);
     await tester.enterText(targetWeight, '19');
     await tester.pump(const Duration(milliseconds: 601));
     expect(store.goal['w'], 80.0);
 
+    await tester.ensureVisible(targetWeight);
+    await tester.tap(targetWeight);
     await tester.enterText(targetWeight, '72');
     await tester.pump(const Duration(milliseconds: 599));
     expect(store.goal['w'], 80.0);
-    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 2));
     expect(store.goal['w'], 72.0);
 
     await tester.tap(find.byType(TextField).at(2));
@@ -722,6 +980,406 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     expect(store.goal['w'], 74.0);
+  });
+
+  testWidgets('weight trend chart waits for two days with weight data', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['age'] = 30;
+    store.d['h'] = 170;
+    store.ensureGoal()['sw'] = 70.0;
+    store.d['weightAnchorDate'] = today();
+    store.d['weights'] = [
+      [today(), 70.0],
+    ];
+    store.save();
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WeightScreen())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Log meals or exercise on at least 2 days in this range to see your trend',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel(RegExp('Estimated weight trend')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('routine-only weight changes appear with dated chart labels', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    final yesterdayKey = yesterday.toIso8601String().substring(0, 10);
+    store.d['age'] = 30;
+    store.d['h'] = 170;
+    store.ensureGoal()['sw'] = 70.0;
+    store.d['weightAnchorDate'] = yesterdayKey;
+    store.d['weights'] = [
+      [yesterdayKey, 70.0],
+    ];
+    store.d['hist'] = [
+      {'d': today(), 'n': 'Strength', 'min': 45, 'kc': 420},
+    ];
+    store.save();
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WeightScreen())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.bySemanticsLabel(
+        RegExp('Estimated weight trend.*activity-only estimate'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(DateFormat('MMM d').format(yesterday)), findsOneWidget);
+    expect(
+      find.text(DateFormat('MMM d').format(DateTime.now())),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'unsafe goal warning is shown once and safe date can be applied',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await store.init();
+      store.d['age'] = 30;
+      store.d['h'] = 160;
+      store.d['sex'] = 'other';
+      store.d['activityLevel'] = 'moderate';
+      store.ensureGoal()['sw'] = 70.0;
+      store.ensureGoal()['w'] = 65.0;
+      store.ensureGoal()['d'] = DateTime.now()
+          .add(const Duration(days: 6))
+          .toIso8601String()
+          .substring(0, 10);
+      store.d['weightAnchorDate'] = today();
+      store.d['weights'] = [
+        [today(), 70.0],
+      ];
+      store.save();
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: WeightScreen())),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Target weight'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+
+      expect(
+        find.textContaining('This date needs 5.83 kg/week'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Your target BMI is 25.4 at your height of 160 cm'),
+        findsOneWidget,
+      );
+
+      final safeDateButton = find.text('Use earliest safe date');
+      await tester.scrollUntilVisible(
+        safeDateButton,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(safeDateButton);
+      await tester.pump(const Duration(milliseconds: 601));
+
+      final savedDate = DateTime.parse(store.goal['d'] as String);
+      final expectedDate = DateTime.now().add(const Duration(days: 78));
+      expect(
+        DateTime(savedDate.year, savedDate.month, savedDate.day),
+        DateTime(expectedDate.year, expectedDate.month, expectedDate.day),
+      );
+    },
+  );
+
+  testWidgets('stale AI plans are hidden until refreshed', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['age'] = 30;
+    store.d['h'] = 170;
+    store.ensureGoal()['sw'] = 70.0;
+    store.ensureGoal()['w'] = 65.0;
+    store.d['weightAnchorDate'] = today();
+    store.d['weights'] = [
+      [today(), 70.0],
+    ];
+    store.d['aiWeightPlan'] = {
+      'sig': 'outdated-signature',
+      'facts': 'Built for old goals.',
+      'plan': {
+        'summary': 'Old AI plan',
+        'workouts': [
+          {'day': 'Monday', 'focus': 'Strength', 'minutes': 30},
+        ],
+        'nutrition_tips': ['Old tip'],
+        'motivation': '',
+        'caution': '',
+      },
+    };
+    store.save();
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WeightScreen())),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('Out of date.'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.textContaining('Out of date.'), findsOneWidget);
+    expect(find.text('Old AI plan'), findsNothing);
+    expect(find.text('Refresh AI plan'), findsOneWidget);
+  });
+
+  testWidgets('Daily details show saved food calories for each date', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    tester.view.physicalSize = const Size(390, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    store.d['weights'] = [
+      [daysAgo(3), 70.0],
+    ];
+    store.d['log'] = [
+      {
+        'd': daysAgo(2),
+        'meals': [
+          {'n': 'Snack', 'k': 180},
+          {'n': 'Lunch', 'k': 250},
+        ],
+        'act': <dynamic>[],
+        'steps': 0,
+      },
+      {
+        'd': daysAgo(1),
+        'meals': [
+          {'n': 'Dinner', 'k': 720},
+        ],
+        'act': <dynamic>[],
+        'steps': 0,
+      },
+    ];
+    store.d['meals'] = [
+      {'n': 'Scanned meal', 'k': 350},
+    ];
+    store.d['act'] = [
+      {'d': today(), 'n': 'Brisk walk', 'min': 30, 'kc': 180},
+    ];
+    store.hist.add({
+      'd': today(),
+      'n': 'Strength workout',
+      'min': 30,
+      'kc': 220,
+    });
+    store.save();
+    expect(WeightEstimator.calculate(store.d).days.last.caloriesConsumed, 350);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WeightScreen())),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Consumed'), findsNothing);
+    expect(find.text('Burned'), findsNothing);
+    await tester.tap(find.text('Daily details'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('consumed'), findsWidgets);
+    expect(find.text('burned'), findsWidgets);
+    expect(find.text('430'), findsOneWidget);
+    expect(find.text('720'), findsOneWidget);
+    expect(find.text('350'), findsOneWidget);
+
+    store.meals.add({'n': 'Scanned lunch', 'k': 250});
+    (store.d['act'] as List).add({
+      'd': today(),
+      'n': 'Easy cycle',
+      'min': 15,
+      'kc': 90,
+    });
+    store.save();
+    await tester.pumpAndSettle();
+
+    final updatedDay = WeightEstimator.calculate(store.d).days.last;
+    expect(updatedDay.caloriesConsumed, 600);
+    expect(
+      find.text(store.withThousands(updatedDay.caloriesConsumed!)),
+      findsOneWidget,
+    );
+    expect(
+      find.text(store.withThousands(updatedDay.activeCaloriesBurned)),
+      findsOneWidget,
+    );
+    expect(find.text('600'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Your Progress weight card shows live consumed and burned calories',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await store.init();
+      tester.view.physicalSize = const Size(390, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      store.d['age'] = 30;
+      store.d['h'] = 170;
+      store.ensureGoal()['sw'] = 70.0;
+      store.d['weightAnchorDate'] = today();
+      store.d['weights'] = [
+        [today(), 70.0],
+      ];
+      store.d['meals'] = [
+        {'n': 'Breakfast', 'k': 420},
+      ];
+      store.d['act'] = [
+        {'d': today(), 'n': 'Brisk walk', 'min': 30, 'kc': 180},
+      ];
+      store.hist.clear();
+      store.save();
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: ProgressTab())),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Weight'));
+      await tester.pumpAndSettle();
+
+      var todayEstimate = WeightEstimator.calculate(store.d).days.last;
+      expect(find.text('Consumed'), findsOneWidget);
+      expect(find.text('Burned'), findsOneWidget);
+      expect(
+        find.text(
+          '${store.withThousands(todayEstimate.caloriesConsumed!)} kcal',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          '${store.withThousands(todayEstimate.activeCaloriesBurned)} kcal',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.restaurant_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.local_fire_department_outlined), findsOneWidget);
+
+      store.meals.add({'n': 'Snack', 'k': 150});
+      store.save();
+      await tester.pumpAndSettle();
+
+      todayEstimate = WeightEstimator.calculate(store.d).days.last;
+      expect(
+        find.text(
+          '${store.withThousands(todayEstimate.caloriesConsumed!)} kcal',
+        ),
+        findsOneWidget,
+      );
+
+      store.hist.add({
+        'd': today(),
+        'n': 'Strength workout',
+        'min': 30,
+        'kc': 151,
+      });
+      store.save();
+      await tester.pumpAndSettle();
+
+      todayEstimate = WeightEstimator.calculate(store.d).days.last;
+      expect(
+        find.text(
+          '${store.withThousands(todayEstimate.activeCaloriesBurned)} kcal',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'Weight & Goals keeps daily details without a separate energy balance',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await store.init();
+      tester.view.physicalSize = const Size(390, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      store.d['age'] = 30;
+      store.d['h'] = 170;
+      store.ensureGoal()['sw'] = 70.0;
+      store.d['weightAnchorDate'] = today();
+      store.d['weights'] = [
+        [today(), 70.0],
+      ];
+      store.save();
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: WeightScreen())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text("Today's energy balance"), findsNothing);
+      expect(find.text('Consumed'), findsNothing);
+      expect(find.text('Burned'), findsNothing);
+      expect(find.text('Daily details'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Daily details'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Daily details'));
+      await tester.pumpAndSettle();
+      expect(find.text('consumed'), findsOneWidget);
+      expect(find.text('burned'), findsOneWidget);
+      expect(find.text('0'), findsWidgets);
+    },
+  );
+
+  testWidgets('manual weigh-in uses a prominent save button', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init();
+    store.d['weights'] = [
+      [today(), 70.0],
+    ];
+    store.save();
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: WeightScreen())),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Save weight'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.widgetWithText(FilledButton, 'Save weight'), findsOneWidget);
+    expect(
+      find.widgetWithIcon(FilledButton, Icons.save_outlined),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Food history displays saved ingredient quantities', (

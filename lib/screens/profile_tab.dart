@@ -1,12 +1,50 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:convert';
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
+
+import '../services/food_image_service.dart';
 import '../services/google_auth_service.dart';
 import '../services/theme_controller.dart';
 import '../store/store.dart';
 import '../theme/app_palette.dart';
 import '../widgets/shared_widgets.dart';
+
+Uint8List? _compressProfilePhoto(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+  final oriented = img.bakeOrientation(decoded);
+  var longestSide = math
+      .min(math.max(oriented.width, oriented.height), 768)
+      .toInt();
+  while (true) {
+    final resized = math.max(oriented.width, oriented.height) > longestSide
+        ? img.copyResize(
+            oriented,
+            width: oriented.width >= oriented.height
+                ? longestSide
+                : (oriented.width * longestSide / oriented.height).round(),
+            height: oriented.height > oriented.width
+                ? longestSide
+                : (oriented.height * longestSide / oriented.width).round(),
+            interpolation: img.Interpolation.average,
+          )
+        : oriented;
+    for (final quality in [80, 70, 60, 50, 40]) {
+      final jpeg = img.encodeJpg(resized, quality: quality);
+      if (jpeg.length <= 680 * 1024) return Uint8List.fromList(jpeg);
+    }
+    if (longestSide <= 128) break;
+    longestSide = (longestSide * 0.8).round();
+  }
+  return null;
+}
 
 /// User-facing message for a password-change outcome. Verification failures
 /// are reported without touching stored data (the store guarantees this).
@@ -24,24 +62,22 @@ String _passwordChangeMessage(PasswordChangeResult result) => switch (result) {
     'Could not reach the account service. Your password was not changed.',
 };
 
-/// User-facing message for a local-account → Firebase migration attempt.
 String _migrationMessage(CloudMigrationResult result) => switch (result) {
   CloudMigrationResult.success =>
-    'Backed up. This account now syncs across your devices.',
-  CloudMigrationResult.alreadyLinked =>
-    'This account is already backed up to the cloud.',
+    'Connected. This account now syncs across your devices.',
+  CloudMigrationResult.alreadyLinked => 'This account is already connected.',
   CloudMigrationResult.invalidPassword =>
     'Password incorrect — nothing was uploaded.',
-  CloudMigrationResult.declined =>
-    'Backup cancelled. Nothing left this device.',
+  CloudMigrationResult.declined => 'Cancelled. Your data stays on this device.',
   CloudMigrationResult.unavailable =>
-    'Cloud backup is unavailable right now. Nothing was uploaded.',
-  CloudMigrationResult.failed =>
-    'Cloud backup failed. Your data is untouched on this device.',
+    'Cloud sync is unavailable right now. Nothing was uploaded.',
+  CloudMigrationResult.failed => 'Cloud sync did not finish. Your data is still saved on this device; retry from Cloud sync.',
 };
 
 class ProfileTab extends StatefulWidget {
-  const ProfileTab({super.key});
+  const ProfileTab({super.key, this.photoPicker});
+
+  final Future<XFile?> Function()? photoPicker;
 
   @override
   State<ProfileTab> createState() => _ProfileTabState();
@@ -50,22 +86,40 @@ class ProfileTab extends StatefulWidget {
 class _ProfileTabState extends State<ProfileTab> {
   bool _logoutInProgress = false;
 
-  /// Uploads an existing local email account to Firebase. The password is
-  /// verified against the on-device PBKDF2 hash *before* the confirmation
-  /// dialog is shown, and a wrong password ends the flow without reading
-  /// anything for upload or touching the cloud.
-  Future<void> _backUpToCloud(BuildContext context) async {
-    final fields = await form(context, 'Back up to cloud', [
-      F('pw', 'Your account password', '', type: 'pass'),
-    ], ok: 'Continue');
-    if (fields == null || !context.mounted) return;
-    final result = await store.migrateLocalAccountToCloud(
-      password: fields['pw'] ?? '',
-      requestConfirmation: (message) async =>
-          context.mounted ? await confirm(context, message, 'Back up') : false,
-    );
-    if (!context.mounted) return;
-    snack(context, _migrationMessage(result));
+  Future<void> _chooseProfilePhoto(BuildContext context) async {
+    try {
+      final picked =
+          await (widget.photoPicker ??
+              () => ImagePicker().pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 78,
+                maxWidth: 768,
+                maxHeight: 768,
+              ))();
+      if (picked == null || !context.mounted) return;
+
+      final bytes = _compressProfilePhoto(await picked.readAsBytes());
+      if (!context.mounted) return;
+      if (bytes == null) {
+        snack(context, 'Could not read this photo. Choose another image.');
+        return;
+      }
+
+      store.d['profilePhoto'] = {'localPhoto': base64Encode(bytes)};
+      store.save();
+      if (context.mounted) {
+        snack(
+          context,
+          store.syncEnabled
+              ? 'Profile photo saved. Syncing to your account.'
+              : 'Profile photo saved on this device.',
+        );
+      }
+    } on Exception {
+      if (context.mounted) {
+        snack(context, 'Could not select or save the profile photo.');
+      }
+    }
   }
 
   Future<void> editPersonalDetails(BuildContext context) async {
@@ -113,6 +167,19 @@ class _ProfileTabState extends State<ProfileTab> {
     if (applied != true) themeController.cancelPalettePreview();
   }
 
+  Future<void> _connectAccountToCloud(BuildContext context) async {
+    final fields = await form(context, 'Connect account to cloud', [
+      F('pw', 'Your account password', '', type: 'pass'),
+    ], ok: 'Continue');
+    if (fields == null || !context.mounted) return;
+    final result = await store.migrateLocalAccountToCloud(
+      password: fields['pw'] ?? '',
+      requestConfirmation: (message) async =>
+          context.mounted ? await confirm(context, message, 'Connect') : false,
+    );
+    if (context.mounted) snack(context, _migrationMessage(result));
+  }
+
   Future<void> _logOut(BuildContext c) async {
     if (_logoutInProgress) return;
     setState(() => _logoutInProgress = true);
@@ -122,30 +189,48 @@ class _ProfileTabState extends State<ProfileTab> {
         return;
       }
 
-      // Local-first sign-out: the device session always ends, even when the
-      // remote Google/Firebase sign-out fails. The failure is surfaced as a
-      // warning while this screen is still mounted, then local sign-out
-      // proceeds unconditionally so a flaky network can never trap the
-      // user in a signed-in state.
-      String? remoteWarning;
-      if (!store.isEmailAccount && store.hasActiveSession) {
+      final signOutGoogle = !store.isEmailAccount && store.hasActiveSession;
+      var syncCompleted = false;
+      var firebaseSignedOut = false;
+      final warnings = <String>[];
+      final result = await store.signOutAsync();
+      syncCompleted = result.syncCompleted;
+      firebaseSignedOut = result.firebaseSignOutError == null;
+      final authError = result.firebaseSignOutError;
+      if (authError is FirebaseException) {
+        warnings.add(googleAuthErrorMessage(authError));
+      } else if (authError is TimeoutException) {
+        warnings.add('Firebase sign-out took too long to complete.');
+      }
+      if (!syncCompleted) {
+        warnings.add(
+          'The latest changes are saved on this device but could not be synced.',
+        );
+      }
+      if (!mounted) return;
+      if (signOutGoogle) {
         try {
-          await GoogleAuthService().signOut();
+          await GoogleAuthService()
+              .signOut(firebaseAlreadySignedOut: firebaseSignedOut)
+              .timeout(const Duration(seconds: 3));
         } on FirebaseAuthException catch (error) {
-          remoteWarning = googleAuthErrorMessage(error);
+          warnings.add(googleAuthErrorMessage(error));
         } on FirebaseException catch (error) {
-          remoteWarning = googleAuthErrorMessage(error);
+          warnings.add(googleAuthErrorMessage(error));
         } on GoogleSignInException catch (error) {
-          remoteWarning = googleAuthErrorMessage(error);
+          warnings.add(googleAuthErrorMessage(error));
+        } on TimeoutException {
+          warnings.add('Google sign-out took too long to complete.');
         }
       }
 
-      if (remoteWarning != null && remoteWarning.isNotEmpty && c.mounted) {
-        snack(c, '$remoteWarning You are signed out on this device.');
+      if (warnings.isNotEmpty && c.mounted) {
+        snack(c, '${warnings.join(' ')} You are signed out on this device.');
       }
-      await store.signOutAsync();
     } finally {
-      if (mounted) setState(() => _logoutInProgress = false);
+      if (mounted) {
+        setState(() => _logoutInProgress = false);
+      }
     }
   }
 
@@ -169,6 +254,11 @@ class _ProfileTabState extends State<ProfileTab> {
     final displayName = name.isEmpty ? 'Your name' : name;
     final age = store.d['age'];
     final height = store.d['h'];
+    final rawProfilePhoto = store.d['profilePhoto'];
+    final profilePhoto = rawProfilePhoto is Map ? rawProfilePhoto : const {};
+    final localPhoto = profilePhoto['localPhoto'];
+    final profileImageId = profilePhoto['imageId'];
+    final providerPhotoUrl = store.d['photoUrl'];
     return tabBody([
       hdr(c, 'Profile & preferences', 'Your corner.'),
       card(
@@ -187,15 +277,24 @@ class _ProfileTabState extends State<ProfileTab> {
                         child: CircleAvatar(
                           radius: 36,
                           backgroundColor: tintOf(c),
-                          child: CircleAvatar(
-                            radius: 31,
-                            backgroundColor: primaryOf(c),
-                            child: Text(
-                              name.isEmpty ? '?' : name[0].toUpperCase(),
-                              style: TextStyle(
-                                color: Theme.of(c).colorScheme.onPrimary,
-                                fontSize: 26,
-                                fontWeight: FontWeight.w800,
+                          child: ClipOval(
+                            child: SizedBox(
+                              width: 62,
+                              height: 62,
+                              child: _ProfileAvatarImage(
+                                initials: name.isEmpty
+                                    ? '?'
+                                    : name[0].toUpperCase(),
+                                localPhoto: localPhoto is String
+                                    ? localPhoto
+                                    : null,
+                                imageId: profileImageId is String
+                                    ? profileImageId
+                                    : null,
+                                photoUrl: providerPhotoUrl is String
+                                    ? providerPhotoUrl
+                                    : null,
+                                uid: store.sessionUid,
                               ),
                             ),
                           ),
@@ -211,16 +310,19 @@ class _ProfileTabState extends State<ProfileTab> {
                               color: Theme.of(c).colorScheme.outlineVariant,
                             ),
                           ),
-                          child: InkResponse(
-                            onTap: () {},
-                            radius: 22,
-                            child: SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: Icon(
-                                Icons.camera_alt_outlined,
-                                size: 15,
-                                color: primaryOf(c),
+                          child: Tooltip(
+                            message: 'Change profile photo',
+                            child: InkResponse(
+                              onTap: () => _chooseProfilePhoto(c),
+                              radius: 22,
+                              child: SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: Icon(
+                                  Icons.camera_alt_outlined,
+                                  size: 15,
+                                  color: primaryOf(c),
+                                ),
                               ),
                             ),
                           ),
@@ -393,37 +495,38 @@ class _ProfileTabState extends State<ProfileTab> {
                 snack(c, _passwordChangeMessage(result));
               },
             ),
-            if (store.isEmailAccount && !store.isCloudLinked)
+            if (store.hasActiveSession &&
+                store.isEmailAccount &&
+                !store.isCloudLinked)
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Back up to cloud'),
+                title: const Text('Connect account to cloud'),
                 subtitle: Text(
-                  'Verify your password to sync this account across devices.',
+                  'Verify your password to sync across devices.',
                   style: muted,
                 ),
                 trailing: const Icon(Icons.cloud_upload_outlined),
-                onTap: () => _backUpToCloud(c),
+                onTap: () => _connectAccountToCloud(c),
               ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Cloud sync'),
-              subtitle: Text(store.syncStatusMessage, style: muted),
-              trailing: store.syncFailed
-                  ? Icon(Icons.refresh, color: Theme.of(c).colorScheme.error)
-                  : const Icon(Icons.cloud_done_outlined),
-              onTap: !store.syncFailed
-                  ? null
-                  : () async {
-                      final ok = await store.syncNow();
-                      if (!c.mounted) return;
-                      snack(
-                        c,
-                        ok
-                            ? 'Backed up to the cloud.'
-                            : store.syncStatusMessage,
-                      );
-                    },
-            ),
+            if (store.hasActiveSession)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Cloud sync'),
+                subtitle: Text(store.syncStatusMessage, style: muted),
+                trailing: store.syncFailed
+                    ? Icon(Icons.refresh, color: Theme.of(c).colorScheme.error)
+                    : const Icon(Icons.cloud_done_outlined),
+                onTap: !store.syncFailed
+                    ? null
+                    : () async {
+                        final ok = await store.syncNow();
+                        if (!c.mounted) return;
+                        snack(
+                          c,
+                          ok ? 'Sync complete.' : store.syncStatusMessage,
+                        );
+                      },
+              ),
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Reset all data'),
@@ -451,6 +554,113 @@ class _ProfileTabState extends State<ProfileTab> {
       ),
     ]);
   });
+}
+
+class _ProfileAvatarImage extends StatefulWidget {
+  const _ProfileAvatarImage({
+    required this.initials,
+    required this.localPhoto,
+    required this.imageId,
+    required this.photoUrl,
+    required this.uid,
+  });
+
+  final String initials;
+  final String? localPhoto;
+  final String? imageId;
+  final String? photoUrl;
+  final String? uid;
+
+  @override
+  State<_ProfileAvatarImage> createState() => _ProfileAvatarImageState();
+}
+
+class _ProfileAvatarImageState extends State<_ProfileAvatarImage> {
+  Future<Uint8List?>? _remoteImage;
+
+  void _loadRemoteImage() {
+    final uid = widget.uid;
+    final imageId = widget.imageId;
+    _remoteImage =
+        widget.localPhoto != null ||
+            uid == null ||
+            imageId == null ||
+            imageId.isEmpty
+        ? null
+        : FoodImageService().download(uid: uid, imageId: imageId);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemoteImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileAvatarImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uid != widget.uid ||
+        oldWidget.imageId != widget.imageId ||
+        oldWidget.localPhoto != widget.localPhoto) {
+      _loadRemoteImage();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = CircleAvatar(
+      backgroundColor: primaryOf(context),
+      child: Text(
+        widget.initials,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onPrimary,
+          fontSize: 26,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+
+    final localPhoto = widget.localPhoto;
+    if (localPhoto != null && localPhoto.isNotEmpty) {
+      try {
+        return Image.memory(
+          base64Decode(localPhoto),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => fallback,
+        );
+      } on FormatException {
+        return fallback;
+      }
+    }
+
+    final imageId = widget.imageId;
+    final uid = widget.uid;
+    if (imageId != null && imageId.isNotEmpty && uid != null) {
+      return FutureBuilder<Uint8List?>(
+        future: _remoteImage,
+        builder: (context, snapshot) {
+          final bytes = snapshot.data;
+          return bytes == null
+              ? fallback
+              : Image.memory(
+                  bytes,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => fallback,
+                );
+        },
+      );
+    }
+
+    final photoUrl = widget.photoUrl;
+    if (photoUrl != null && photoUrl.startsWith('https://')) {
+      return Image.network(
+        photoUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback,
+      );
+    }
+    return fallback;
+  }
 }
 
 class _ColorPaletteSheet extends StatefulWidget {

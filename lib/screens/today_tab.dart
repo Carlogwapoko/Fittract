@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../services/daily_movement_tracking_service.dart';
 import '../services/weight_estimator.dart';
 import '../store/store.dart';
 import '../theme/app_palette.dart';
@@ -72,7 +75,9 @@ class _TodayTabState extends State<TodayTab> {
             label: 'Undo',
             onPressed: () {
               final entries = store.d['water'];
-              if (entries is List && entries.remove(entry)) store.save();
+              if (entries is List && entries.remove(entry)) {
+                store.save();
+              }
             },
           ),
         ),
@@ -122,19 +127,6 @@ class _TodayTabState extends State<TodayTab> {
     final caloriesEaten = store.kcal();
     final waterGoalMl = store.waterGoalMl;
     final waterMl = store.water();
-    final weightEstimate = WeightEstimator.calculate(store.d);
-    final weightEntries = _weightEntries();
-    final manualWeightToday = weightEntries.any((entry) => entry.$1 == today());
-    final currentWeightDay = weightEstimate.days.isEmpty
-        ? null
-        : weightEstimate.days.last;
-    final estimatedWeight =
-        weightEstimate.hasAnchor &&
-        !manualWeightToday &&
-        currentWeightDay != null &&
-        !currentWeightDay.anchor &&
-        currentWeightDay.complete &&
-        !currentWeightDay.manuallyWeighed;
     final weeklyCount = store.wkCount(0);
     final weeklyGoal = store.weeklyWorkoutGoal;
 
@@ -161,9 +153,6 @@ class _TodayTabState extends State<TodayTab> {
     final rawExercises = routine?['ex'];
     final exercises = rawExercises is List ? rawExercises : const [];
 
-    final weightSubtitle = estimatedWeight
-        ? 'Estimated from calories consumed and burned'
-        : _weightSubtitle(weightEstimate, weightEntries);
     final unreadCount = newReminders ? reminders : 0;
     final primary = primaryOf(c);
     final caloriesOverGoal = caloriesEaten > calorieGoal;
@@ -407,30 +396,55 @@ class _TodayTabState extends State<TodayTab> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: ProgressRingCard(
-                        title: 'Daily steps',
-                        value: store.withThousands(store.steps),
-                        unit: 'steps',
-                        subtitle:
-                            'of ${store.withThousands(stepGoal)} steps today',
-                        progress: store.steps / stepGoal,
-                        icon: Icons.directions_run,
-                        accentColor: appTokensOf(c).activity,
-                        onTap: () => go(c, const ActivityScreen()),
+                      child: ListenableBuilder(
+                        listenable: dailyMovementTracking,
+                        builder: (context, _) => ProgressRingCard(
+                          title: 'Daily steps',
+                          value: store.withThousands(store.steps),
+                          unit: 'steps',
+                          subtitle:
+                              'of ${store.withThousands(stepGoal)} steps today',
+                          progress: store.steps / stepGoal,
+                          icon: Icons.directions_run,
+                          accentColor: appTokensOf(context).activity,
+                          onTap: () => go(context, const ActivityScreen()),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: ProgressRingCard(
-                        title: 'Weight',
-                        value: weightEstimate.hasAnchor
-                            ? weightEstimate.currentWeightKg.toStringAsFixed(1)
-                            : 'Not set',
-                        unit: weightEstimate.hasAnchor ? 'kg' : null,
-                        subtitle: weightSubtitle,
-                        icon: Icons.monitor_weight,
-                        estimated: estimatedWeight,
-                        onTap: () => go(c, const WeightScreen()),
+                      child: ListenableBuilder(
+                        listenable: dailyMovementTracking,
+                        builder: (context, _) {
+                          final estimate = WeightEstimator.calculate(store.d);
+                          final entries = _weightEntries();
+                          final manualWeightToday = entries.any(
+                            (entry) => entry.$1 == today(),
+                          );
+                          final day = estimate.days.isEmpty
+                              ? null
+                              : estimate.days.last;
+                          final estimated =
+                              estimate.hasAnchor &&
+                              !manualWeightToday &&
+                              day != null &&
+                              !day.anchor &&
+                              day.complete &&
+                              !day.manuallyWeighed;
+                          return ProgressRingCard(
+                            title: 'Weight',
+                            value: estimate.hasAnchor
+                                ? estimate.currentWeightKg.toStringAsFixed(1)
+                                : 'Not set',
+                            unit: estimate.hasAnchor ? 'kg' : null,
+                            subtitle: estimated
+                                ? 'Estimated from calories consumed and burned'
+                                : _weightSubtitle(estimate, entries),
+                            icon: Icons.monitor_weight,
+                            estimated: estimated,
+                            onTap: () => go(context, const WeightScreen()),
+                          );
+                        },
                       ),
                     ),
                   ],

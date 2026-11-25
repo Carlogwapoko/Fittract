@@ -11,8 +11,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/food_image_service.dart';
 import '../services/weight_estimator.dart';
 import '../theme/app_palette.dart';
+import 'local_database.dart';
 import 'password_hash_web_stub.dart'
     if (dart.library.js_interop) 'password_hash_web.dart'
     as web_hash;
@@ -31,6 +33,7 @@ String isoOf(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 String today() => isoOf(DateTime.now());
 String daysAgo(int n) => isoOf(DateTime.now().subtract(Duration(days: n)));
+Object? _decodeJsonPayload(String raw) => jsonDecode(raw);
 String niceDate() {
   const w = [
     'Monday',
@@ -197,7 +200,19 @@ const kCloudFieldDenylist = [
 /// material into local state.
 @visibleForTesting
 Map<String, dynamic> sanitizedAccountForCloud(Map<String, dynamic> account) {
-  final copy = Map<String, dynamic>.from(account);
+  Object? sanitize(Object? value) {
+    if (value is Map) {
+      return <String, dynamic>{
+        for (final entry in value.entries)
+          if (entry.key.toString() != 'localPhoto')
+            entry.key.toString(): sanitize(entry.value),
+      };
+    }
+    if (value is List) return value.map(sanitize).toList();
+    return value;
+  }
+
+  final copy = Map<String, dynamic>.from(sanitize(account) as Map);
   for (final key in kCloudFieldDenylist) {
     copy.remove(key);
   }
@@ -220,6 +235,38 @@ String _canonicalJson(Object? value) {
 String canonicalAccountHash(Map<String, dynamic> account) =>
     sha256.convert(utf8.encode(_canonicalJson(account))).toString();
 
+@visibleForTesting
+String localAccountSyncHash(Map<String, dynamic> account) {
+  final pendingPhotos = <String>[];
+  void collectPendingPhotos(Object? value) {
+    if (value is Map) {
+      final photo = value['localPhoto'];
+      final imageId = value['imageId'];
+      final imageUrl = value['imageUrl'];
+      final hasRemoteImage =
+          imageId is String && imageId.isNotEmpty ||
+          imageUrl is String && imageUrl.isNotEmpty;
+      if (photo is String && !hasRemoteImage) {
+        pendingPhotos.add(sha256.convert(utf8.encode(photo)).toString());
+      }
+      for (final item in value.values) {
+        collectPendingPhotos(item);
+      }
+    } else if (value is List) {
+      for (final item in value) {
+        collectPendingPhotos(item);
+      }
+    }
+  }
+
+  collectPendingPhotos(account);
+  final sanitized = sanitizedAccountForCloud(account);
+  if (pendingPhotos.isNotEmpty) {
+    sanitized['_pendingPhotoHashes'] = pendingPhotos;
+  }
+  return canonicalAccountHash(sanitized);
+}
+
 // ───────────────────────── CLOUD DOCUMENT API ─────────────────────────
 // Document-level view of `users/{uid}`. The production implementation wraps
 // Firestore (including its transaction), while tests inject a fake so that
@@ -240,6 +287,10 @@ class CloudDocSnapshot {
 abstract class CloudUserDoc {
   /// Reads the document. Throws on transport failure.
   Future<CloudDocSnapshot> read(String uid);
+
+  /// Watches the document for updates. Lightweight test doubles may use the
+  /// empty default stream and continue to exercise explicit sync cycles.
+  Stream<CloudDocSnapshot> watch(String uid) => const Stream.empty();
 
   /// Compare-and-set write: only writes when the stored `updatedAt` still
   /// equals [baseUpdatedAt] (null means "expect no document"). Returns the
@@ -266,11 +317,21 @@ class FirestoreUserDoc implements CloudUserDoc {
   DocumentReference<Map<String, dynamic>> _ref(String uid) =>
       _db.collection('users').doc(uid);
 
+  int _nextRevision(Object? current) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return current is int && now <= current ? current + 1 : now;
+  }
+
   @override
   Future<CloudDocSnapshot> read(String uid) async {
     final snap = await _ref(uid).get();
     return CloudDocSnapshot(exists: snap.exists, data: snap.data());
   }
+
+  @override
+  Stream<CloudDocSnapshot> watch(String uid) => _ref(uid)
+      .snapshots()
+      .map((snap) => CloudDocSnapshot(exists: snap.exists, data: snap.data()));
 
   @override
   Future<Object?> guardedWrite(
@@ -279,22 +340,26 @@ class FirestoreUserDoc implements CloudUserDoc {
     Object? baseUpdatedAt,
   ) => _db.runTransaction((tx) async {
     final snap = await tx.get(_ref(uid));
+    final currentRevision = snap.data()?['updatedAt'];
     if (snap.exists) {
-      if (snap.data()?['updatedAt'] != baseUpdatedAt) return null;
+      if (currentRevision != baseUpdatedAt) return null;
     } else if (baseUpdatedAt != null) {
       return null;
     }
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = _nextRevision(currentRevision);
     tx.set(_ref(uid), {'data': payload, 'updatedAt': now});
     return now;
   });
 
   @override
-  Future<Object> forceWrite(String uid, Map<String, dynamic> payload) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await _ref(uid).set({'data': payload, 'updatedAt': now});
-    return now;
-  }
+  Future<Object> forceWrite(String uid, Map<String, dynamic> payload) =>
+      _db.runTransaction((tx) async {
+        final ref = _ref(uid);
+        final snap = await tx.get(ref);
+        final now = _nextRevision(snap.data()?['updatedAt']);
+        tx.set(ref, {'data': payload, 'updatedAt': now});
+        return now;
+      });
 }
 
 /// Which side a sync cycle should take.
@@ -330,57 +395,39 @@ SyncDirection resolveSyncDirection({
 /// True when [snapshot] holds fitness records, customized goals, or session
 /// state. Used by the never-synced rule above to protect local edits.
 @visibleForTesting
-bool hasLocalFitnessData(Map<String, dynamic> snapshot) {
+bool hasLocalFitnessData(
+  Map<String, dynamic> snapshot, {
+  String? providerDisplayName,
+}) {
   final defaults = Store().seed();
-  const collections = [
-    'routines',
-    'sch',
-    'water',
-    'act',
-    'weights',
-    'meals',
-    'hist',
-    'log',
-  ];
-  for (final key in collections) {
-    final value = snapshot[key];
-    if (value is List && value.isNotEmpty) return true;
+  const ignoredKeys = {
+    'user',
+    'accountId',
+    'authProvider',
+    'photoUrl',
+    'cred',
+    'pw',
+    'password',
+    'hash',
+    'salt',
+    'cloudOptOut',
+    'lastUser',
+    'day',
+    'weightEstimateCache',
+  };
+  final name = snapshot['name'];
+  if (name is String && name.trim().isNotEmpty) {
+    final isProviderName =
+        snapshot['authProvider'] == 'google' &&
+        providerDisplayName is String &&
+        name.trim() == providerDisplayName.trim();
+    if (!isProviderName) return true;
   }
-  if (((snapshot['steps'] as num?) ?? 0) != 0) return true;
-  if (snapshot['activeW'] is Map) return true;
-  final goal = snapshot['goal'];
-  if (goal is Map) {
-    final target = goal['w'];
-    final starting = goal['sw'];
-    final date = goal['d'];
-    if ((target is num && target > 0) ||
-        (starting is num && starting > 0) ||
-        (date is String && date.isNotEmpty)) {
+  for (final entry in snapshot.entries) {
+    if (ignoredKeys.contains(entry.key) || entry.key == 'name') continue;
+    if (_canonicalJson(entry.value) != _canonicalJson(defaults[entry.key])) {
       return true;
     }
-  }
-  bool differsFromDefaults(Object? value, Object? defaultValue) {
-    if (value is! Map ||
-        defaultValue is! Map ||
-        value.length != defaultValue.length) {
-      return true;
-    }
-    return defaultValue.entries.any((entry) => value[entry.key] != entry.value);
-  }
-
-  if (differsFromDefaults(
-        snapshot['nutritionGoals'],
-        defaults['nutritionGoals'],
-      ) ||
-      differsFromDefaults(
-        snapshot['activityGoals'],
-        defaults['activityGoals'],
-      )) {
-    return true;
-  }
-  if (snapshot['lastWorkout'] != defaults['lastWorkout'] ||
-      snapshot['activeActivity'] != defaults['activeActivity']) {
-    return true;
   }
   return false;
 }
@@ -615,22 +662,38 @@ String? validateSetRow(List<Map<String, dynamic>> row) {
 }
 
 // ───────────────────────── STORE ─────────────────────────
+class SignOutResult {
+  const SignOutResult({required this.syncCompleted, this.firebaseSignOutError});
+
+  final bool syncCompleted;
+  final Object? firebaseSignOutError;
+}
+
 class Store extends ChangeNotifier {
   late SharedPreferences sp;
+  late LocalDatabase localDatabase;
   Map<String, dynamic> d = {};
   bool _initialized = false;
+  Map<String, Map<String, dynamic>> _accountSnapshots = {};
+  Future<void> _localWriteQueue = Future<void>.value();
+  Object? _localStorageError;
 
   String? _sessionKey;
   String? _sessionProvider; // 'email' | 'google'
   String? _sessionEmail;
+  String? _sessionDisplayName;
   String? _sessionUid; // Firebase uid when the account is cloud-linked
+  bool _accountRestoring = false;
 
   bool get hasActiveSession => _sessionKey != null;
   bool get isInitialized => _initialized;
+  Object? get localStorageError => _localStorageError;
   bool get isEmailAccount => _sessionProvider == 'email';
+  bool get isGoogleAccount => _sessionProvider == 'google';
   bool get hasLocalCredential => d['cred'] is Map;
   String? get sessionUid => _sessionUid;
   bool get isCloudLinked => _sessionUid != null;
+  bool get isAccountRestoring => _accountRestoring;
 
   /// True once [Firebase.initializeApp] succeeded in main(). Tests and
   /// unconfigured platforms run fully local: every cloud call is skipped.
@@ -644,9 +707,11 @@ class Store extends ChangeNotifier {
   Timer? _syncDebounce;
   Future<bool>? _syncInFlight;
   int? _syncInFlightEpoch;
+  StreamSubscription<CloudDocSnapshot>? _cloudSubscription;
   bool _syncFailed = false;
   String? _syncError;
   bool _disposed = false;
+  int _localEditEpoch = 0;
 
   /// Bumped whenever the active identity changes (bind, switch, sign-out).
   /// Every in-flight cloud operation re-checks it after each await, so a slow
@@ -661,6 +726,10 @@ class Store extends ChangeNotifier {
   /// [FirestoreUserDoc] is used.
   @visibleForTesting
   CloudUserDoc? cloudUserDoc;
+
+  /// Test seam for local-photo migration into the Firestore subcollection.
+  @visibleForTesting
+  FoodImageUploader? foodImageUploader;
 
   /// Test seam replacing the Firebase Auth email/password step (the link
   /// attempted by registration and migration, and the sign-in login performs
@@ -698,14 +767,14 @@ class Store extends ChangeNotifier {
     if (!hasActiveSession) return 'Not signed in.';
     if (!isCloudLinked) {
       return _cloudReady
-          ? 'Local only — this account is not backed up to the cloud yet.'
-          : 'Local only — cloud backup is unavailable.';
+          ? 'Local only — this account is not connected to cloud sync yet.'
+          : 'Local only — cloud sync is unavailable.';
     }
-    if (syncRunning) return 'Backing up to the cloud…';
-    if (_syncFailed) return _syncError ?? 'Backup failed.';
-    if (syncPending) return 'Waiting to back up…';
+    if (syncRunning) return 'Syncing to the cloud…';
+    if (_syncFailed) return _syncError ?? 'Sync failed.';
+    if (syncPending) return 'Waiting to sync…';
     if (!_cloudReady) {
-      return 'Cloud backup unavailable — saving on this device.';
+      return 'Cloud sync unavailable — saving on this device.';
     }
     return 'Up to date with the cloud.';
   }
@@ -769,26 +838,112 @@ class Store extends ChangeNotifier {
     if (error is FirebaseException) {
       return switch (error.code) {
         'permission-denied' =>
-          'Cloud backup was denied. Sign in as this account and check the '
+          'Cloud sync was denied. Sign in as this account and check the '
               'security rules.',
-        'unauthenticated' => 'Sign in again to resume cloud backups.',
+        'unauthenticated' => 'Sign in again to resume cloud sync.',
         'unavailable' =>
           'Cloud storage is unreachable. Your data is saved on this device.',
         'resource-exhausted' =>
-          'Cloud backup is rate-limited right now. It will retry shortly.',
-        _ => 'Cloud backup failed. Your data is saved on this device.',
+          'Cloud sync is rate-limited right now. It will retry shortly.',
+        _ => 'Cloud sync failed. Your data is saved on this device.',
       };
     }
-    return 'Cloud backup failed. Your data is saved on this device.';
+    return 'Cloud sync failed. Your data is saved on this device.';
   }
 
-  Future<void> init() async {
+  Future<void> init({bool rollDay = true, bool syncCloud = true}) async {
     sp = await SharedPreferences.getInstance();
+    localDatabase = LocalDatabase(sp);
+    await localDatabase.open();
+    if (localDatabase.writesAreSynchronous) {
+      // Widget tests reuse the top-level Store across fake-async zones. The
+      // in-memory backend commits writes before returning, so old queue
+      // continuations are bookkeeping only and must not cross test zones.
+      _localWriteQueue = Future<void>.value();
+      _localStorageError = null;
+    }
+    if (!sp.containsKey(_sessionMetaKey) && sp.containsKey('ft')) {
+      try {
+        await _migrateLegacyData();
+      } catch (error, stackTrace) {
+        debugPrint('Legacy data migration failed: $error\n$stackTrace');
+      }
+    }
+    if (sp.getKeys().any(
+      (key) =>
+          key == 'ft' ||
+          key == _legacyBackupKey ||
+          key.startsWith('ft_email_account_') ||
+          key.startsWith('ft_account_'),
+    )) {
+      try {
+        await _migratePreferenceSnapshots();
+      } catch (error, stackTrace) {
+        debugPrint('Account snapshot migration failed: $error\n$stackTrace');
+      }
+    }
+    try {
+      _accountSnapshots = await localDatabase.readAllAccounts();
+    } catch (error, stackTrace) {
+      debugPrint('Local account loading failed: $error\n$stackTrace');
+      Error.throwWithStackTrace(
+        StateError('Could not load local accounts: $error'),
+        stackTrace,
+      );
+    }
+    try {
+      _loadSession();
+    } catch (error, stackTrace) {
+      debugPrint('Local session loading failed: $error\n$stackTrace');
+      _clearSessionState();
+      d = seed();
+    }
     _initialized = true;
-    await _migrateLegacyData();
-    _loadSession();
-    roll();
-    if (isCloudLinked) unawaited(_pullFromCloud());
+    if (rollDay) roll();
+    if (syncCloud) {
+      _startCloudListener();
+      if (isCloudLinked) await _restoreCloudSnapshot(_sessionEpoch);
+    }
+  }
+
+  Future<void> startCloudSync() async {
+    if (!_cloudReady || !isCloudLinked) return;
+    _startCloudListener();
+    await _restoreCloudSnapshot(_sessionEpoch);
+  }
+
+  void reportFirebaseInitializationFailure(Object error) {
+    _markSyncFailure(error);
+  }
+
+  Future<bool> _restoreCloudSnapshot(int epoch) async {
+    if (epoch != _sessionEpoch || !isCloudLinked || !_cloudReady) {
+      if (epoch == _sessionEpoch) {
+        _accountRestoring = false;
+        _notify();
+      }
+      return false;
+    }
+    _accountRestoring = true;
+    _notify();
+    try {
+      return await _pullFromCloud().timeout(cloudLinkTimeout);
+    } on TimeoutException catch (error) {
+      if (epoch == _sessionEpoch) _markSyncFailure(error);
+      return false;
+    } finally {
+      if (epoch == _sessionEpoch) {
+        _accountRestoring = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<Object?> _decodeLocalJson(String raw) {
+    if (kIsWeb || raw.length < 128 * 1024) {
+      return Future<Object?>.value(jsonDecode(raw));
+    }
+    return compute(_decodeJsonPayload, raw);
   }
 
   Map<String, dynamic> seed() => {
@@ -816,6 +971,7 @@ class Store extends ChangeNotifier {
     'sch': <Map<String, dynamic>>[],
     'water': <Map<String, dynamic>>[],
     'steps': 0,
+    'distanceMeters': 0.0,
     'act': <Map<String, dynamic>>[],
     'weights': <List<dynamic>>[],
     'meals': <Map<String, dynamic>>[],
@@ -824,16 +980,14 @@ class Store extends ChangeNotifier {
     'log': [],
   };
 
-  // Encode once and reuse for both buckets: every save previously ran
-  // jsonEncode over the whole snapshot twice, which is main-thread work
-  // (felt on web/debug) and doubled localStorage writes.
+  // Keep the existing mutable snapshot API; its durable copy is written to
+  // SQLite asynchronously and serialized through one queue.
   void save() {
     WeightEstimator.calculate(d);
-    final payload = jsonEncode(d);
-    sp.setString('ft', payload);
-    final key = _sessionKey;
-    if (key != null && key.isNotEmpty) {
-      sp.setString(key, payload);
+    _localEditEpoch++;
+    final key = _storageKey;
+    _persistSnapshot(key, d);
+    if (_sessionKey != null && _sessionKey!.isNotEmpty) {
       _touchLocalEdit(key);
     }
     _scheduleSync();
@@ -845,14 +999,97 @@ class Store extends ChangeNotifier {
   /// per update would be wasteful.
   void saveQuiet() {
     WeightEstimator.calculate(d);
-    final payload = jsonEncode(d);
-    sp.setString('ft', payload);
-    final key = _sessionKey;
-    if (key != null && key.isNotEmpty) {
-      sp.setString(key, payload);
-      _touchLocalEdit(key);
-    }
+    _localEditEpoch++;
+    final key = _storageKey;
+    _persistSnapshot(key, d);
+    if (_sessionKey != null && _sessionKey!.isNotEmpty) _touchLocalEdit(key);
     _scheduleSync();
+  }
+
+  String get _storageKey => _sessionKey ?? 'ft';
+
+  void _persistLocalSnapshot() => _persistSnapshot(_storageKey, d);
+
+  void _persistSnapshot(String key, Map<String, dynamic> snapshot) {
+    final copy = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(snapshot)) as Map,
+    );
+    final database = localDatabase;
+    _accountSnapshots[key] = copy;
+    if (database.writesAreSynchronous) {
+      try {
+        database.writeAccountSynchronously(key, copy);
+        _localStorageError = null;
+      } catch (error, stackTrace) {
+        _localStorageError = error;
+        debugPrint('Local SQLite write failed: $error\n$stackTrace');
+        _notify();
+      }
+      return;
+    }
+    _localWriteQueue = _localWriteQueue
+        .then((_) async {
+          await database.writeAccount(key, copy);
+          _localStorageError = null;
+        })
+        .catchError((Object error, StackTrace stackTrace) {
+          _localStorageError = error;
+          debugPrint('Local SQLite write failed: $error\n$stackTrace');
+          _notify();
+        });
+  }
+
+  Future<void> _flushLocalWrites() async {
+    await _localWriteQueue;
+    final error = _localStorageError;
+    if (error != null) {
+      throw StateError('Local SQLite storage failed: $error');
+    }
+  }
+
+  @visibleForTesting
+  Future<Map<String, dynamic>?> readStoredAccount(String key) async {
+    await _flushLocalWrites();
+    return localDatabase.readAccount(key);
+  }
+
+  Future<List<dynamic>> readRecords(String collection) async {
+    final records = d[collection];
+    return records is List ? List<dynamic>.from(records) : <dynamic>[];
+  }
+
+  Future<void> createRecord(String collection, dynamic record) async {
+    final records = d[collection] is List
+        ? List<dynamic>.from(d[collection] as List)
+        : <dynamic>[];
+    records.add(record);
+    d[collection] = records;
+    save();
+    await _flushLocalWrites();
+  }
+
+  Future<void> updateRecord(
+    String collection,
+    int index,
+    dynamic record,
+  ) async {
+    final existing = d[collection];
+    if (existing is! List || index < 0 || index >= existing.length) {
+      throw RangeError.index(index, existing is List ? existing : const []);
+    }
+    d[collection] = List<dynamic>.from(existing)..[index] = record;
+    save();
+    await _flushLocalWrites();
+  }
+
+  Future<void> deleteRecord(String collection, int index) async {
+    final existing = d[collection];
+    if (existing is! List || index < 0 || index >= existing.length) {
+      throw RangeError.index(index, existing is List ? existing : const []);
+    }
+    d[collection] = List<dynamic>.from(existing)..removeAt(index);
+    save();
+    await _flushLocalWrites();
   }
 
   /// Records when this account last changed on this device. Sync cycles
@@ -881,6 +1118,7 @@ class Store extends ChangeNotifier {
         'provider': _sessionProvider,
         'key': _sessionKey,
         'email': _sessionEmail,
+        'displayName': _sessionDisplayName,
         'uid': _sessionUid,
       }),
     );
@@ -891,7 +1129,9 @@ class Store extends ChangeNotifier {
     _sessionKey = null;
     _sessionProvider = null;
     _sessionEmail = null;
+    _sessionDisplayName = null;
     _sessionUid = null;
+    _accountRestoring = false;
   }
 
   void _loadSession() {
@@ -924,33 +1164,26 @@ class Store extends ChangeNotifier {
     final uid = meta['uid'];
     _sessionProvider = provider is String ? provider : null;
     _sessionEmail = email is String ? email : null;
+    final displayName = meta['displayName'];
+    _sessionDisplayName = displayName is String ? displayName : null;
     _sessionUid = uid is String && uid.isNotEmpty ? uid : null;
+    if (_sessionDisplayName == null &&
+        _sessionProvider == 'google' &&
+        _sessionUid != null &&
+        _firebaseReady &&
+        _auth.currentUser?.uid == _sessionUid) {
+      _sessionDisplayName = _auth.currentUser?.displayName;
+    }
 
-    final raw = sp.getString(key);
-    if (raw == null) {
+    final account = _accountSnapshots[key];
+    if (account == null) {
       sp.remove(_sessionMetaKey);
       _clearSessionState();
       d = seed();
       return;
     }
 
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        d = decoded;
-      } else if (decoded is Map) {
-        d = Map<String, dynamic>.from(decoded);
-      } else {
-        throw const FormatException('Account snapshot is not a JSON object.');
-      }
-    } catch (_) {
-      // Corrupt snapshot: keep it on disk for recovery, sign out, and fall
-      // back to a safe seed. Never overwrite the corrupt bucket with seed.
-      sp.remove(_sessionMetaKey);
-      _clearSessionState();
-      d = seed();
-      return;
-    }
+    d = Map<String, dynamic>.from(jsonDecode(jsonEncode(account)) as Map);
 
     // Re-assert identity from the session pointer so a stale snapshot cannot
     // present a different user.
@@ -975,7 +1208,9 @@ class Store extends ChangeNotifier {
     if (sp.containsKey(_sessionMetaKey)) return;
 
     final rawFt = sp.getString('ft');
-    if (rawFt == null || rawFt.isEmpty) return;
+    if (rawFt == null || rawFt.isEmpty) {
+      return;
+    }
 
     if (!sp.containsKey(_legacyBackupKey)) {
       sp.setString(_legacyBackupKey, rawFt);
@@ -983,7 +1218,7 @@ class Store extends ChangeNotifier {
 
     Map<String, dynamic>? legacy;
     try {
-      final decoded = jsonDecode(rawFt);
+      final decoded = await _decodeLocalJson(rawFt);
       if (decoded is Map<String, dynamic>) {
         legacy = decoded;
       } else if (decoded is Map) {
@@ -1045,6 +1280,35 @@ class Store extends ChangeNotifier {
     sp.remove('ft');
   }
 
+  Future<void> _migratePreferenceSnapshots() async {
+    const accountPrefixes = ['ft_email_account_', 'ft_account_'];
+    final keys = sp.getKeys().toList();
+    for (final preferenceKey in keys) {
+      final isAccount =
+          preferenceKey == 'ft' ||
+          accountPrefixes.any(preferenceKey.startsWith);
+      final isLegacyBackup = preferenceKey == _legacyBackupKey;
+      if (!isAccount && !isLegacyBackup) continue;
+
+      final raw = sp.getString(preferenceKey);
+      if (raw == null || raw.isEmpty) continue;
+      Map<String, dynamic> snapshot;
+      try {
+        final decoded = await _decodeLocalJson(raw);
+        if (decoded is! Map) continue;
+        snapshot = Map<String, dynamic>.from(decoded);
+      } on FormatException {
+        continue;
+      }
+
+      final accountKey = isLegacyBackup ? 'ft_legacy_backup' : preferenceKey;
+      await localDatabase.importAccountIfAbsent(accountKey, snapshot);
+      if (await localDatabase.containsAccount(accountKey)) {
+        await sp.remove(preferenceKey);
+      }
+    }
+  }
+
   // ─────────── Email authentication ───────────
   // Local PBKDF2 credentials remain the source of truth and keep working
   // with no network. Firebase Auth is linked best-effort for local accounts;
@@ -1068,7 +1332,7 @@ class Store extends ChangeNotifier {
       return AuthResult.invalidInput;
     }
     final key = emailStorageKey(normalized);
-    if (sp.containsKey(key)) return AuthResult.duplicateEmail;
+    if (_accountSnapshots.containsKey(key)) return AuthResult.duplicateEmail;
 
     final cred = await _hashPassword(password);
     final fresh = seed();
@@ -1158,12 +1422,12 @@ class Store extends ChangeNotifier {
     if (normalized.isEmpty || password.isEmpty) return AuthResult.invalidInput;
 
     final key = emailStorageKey(normalized);
-    final raw = sp.getString(key);
+    final storedAccount = _accountSnapshots[key];
     Map<String, dynamic> account;
     String? cloudUid;
     Future<String?>? pending;
 
-    if (raw == null) {
+    if (storedAccount == null) {
       // Cloud accounts must be usable on a fresh device. Firebase verifies
       // the password before we create a local verifier or load any profile.
       try {
@@ -1189,18 +1453,9 @@ class Store extends ChangeNotifier {
         ..['user'] = normalized
         ..['cred'] = await _hashPassword(password);
     } else {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic>) {
-          account = decoded;
-        } else if (decoded is Map) {
-          account = Map<String, dynamic>.from(decoded);
-        } else {
-          return AuthResult.storageError;
-        }
-      } catch (_) {
-        return AuthResult.storageError;
-      }
+      account = Map<String, dynamic>.from(
+        jsonDecode(jsonEncode(storedAccount)) as Map,
+      );
 
       final cred = account['cred'];
       // Refuse when no verifiable credential exists (e.g. an unsafe legacy
@@ -1234,7 +1489,7 @@ class Store extends ChangeNotifier {
         }
 
         account['cred'] = await _hashPassword(password);
-        sp.setString(key, jsonEncode(account));
+        _persistSnapshot(key, account);
       } else {
         // The local password is valid. Cloud sign-in remains best-effort from
         // the local credential's point of view, with bounded network waits.
@@ -1270,10 +1525,16 @@ class Store extends ChangeNotifier {
     _sessionKey = key;
     _sessionProvider = 'email';
     _sessionEmail = normalized;
+    _sessionDisplayName = null;
     _sessionUid = cloudUid;
     _writeSessionMeta();
-    save();
-    if (cloudUid != null) unawaited(_pullFromCloud());
+    _accountRestoring = cloudUid != null && _cloudReady;
+    _persistLocalSnapshot();
+    _notify();
+    if (cloudUid != null) {
+      _startCloudListener();
+      await _restoreCloudSnapshot(_sessionEpoch);
+    }
     return AuthResult.success;
   }
 
@@ -1321,7 +1582,7 @@ class Store extends ChangeNotifier {
         if (!create) {
           // Declined: local-only session; do not ask again on later logins.
           account['cloudOptOut'] = true;
-          sp.setString(emailStorageKey(email), jsonEncode(account));
+          _persistSnapshot(emailStorageKey(email), account);
           return (uid: null, error: null);
         }
         // Both calls below are bounded for the reason login's own sign-in
@@ -1485,10 +1746,12 @@ class Store extends ChangeNotifier {
     d.remove('cloudOptOut');
     _writeSessionMeta();
     save();
+    _startCloudListener();
     // Uploads the local snapshot (or reconciles with an existing document);
     // any failure stays visible through the sync status and retries later.
-    await _pullFromCloud();
-    return CloudMigrationResult.success;
+    return await _pullFromCloud()
+        ? CloudMigrationResult.success
+        : CloudMigrationResult.failed;
   }
 
   /// Sends a Firebase password-reset email. Only cloud-linked accounts can
@@ -1564,9 +1827,7 @@ class Store extends ChangeNotifier {
     // Flush the active copy to its account snapshot before detaching so the
     // user's fitness records are preserved.
     final key = _sessionKey;
-    if (key != null && key.isNotEmpty) {
-      sp.setString(key, jsonEncode(d));
-    }
+    if (key != null && key.isNotEmpty) _persistSnapshot(key, d);
     sp.remove(_sessionMetaKey);
     // Stop any queued sync for the old identity first: [save] wrote the
     // snapshot above, so nothing is lost, and the epoch bump makes an
@@ -1574,24 +1835,49 @@ class Store extends ChangeNotifier {
     // this user's cloud data into the next session.
     _syncDebounce?.cancel();
     _syncDebounce = null;
+    final subscription = _cloudSubscription;
+    _cloudSubscription = null;
+    if (subscription != null) unawaited(subscription.cancel());
     _clearSessionState();
     _syncFailed = false;
     _syncError = null;
     d = seed();
-    sp.setString('ft', jsonEncode(d));
+    _persistSnapshot('ft', d);
     notifyListeners();
   }
 
   /// Like [signOut], but also detaches the Firebase session. The local
   /// sign-out always completes even if the remote one fails, so a flaky
   /// network can never trap the user in a signed-in state.
-  Future<void> signOutAsync() async {
+  Future<SignOutResult> signOutAsync() async {
+    final key = _sessionKey;
+    if (key != null && key.isNotEmpty) _persistSnapshot(key, d);
+    await _flushLocalWrites();
+    var syncComplete = false;
+    if (isCloudLinked) {
+      try {
+        syncComplete = await syncNow().timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        syncComplete = false;
+      }
+    }
     signOut();
-    if (!_firebaseReady) return;
+    if (!_firebaseReady) {
+      return SignOutResult(syncCompleted: syncComplete);
+    }
     try {
-      await _auth.signOut();
-    } catch (_) {
-      // Local session is already cleared; ignore remote failures.
+      await _auth.signOut().timeout(const Duration(seconds: 5));
+      return SignOutResult(syncCompleted: syncComplete);
+    } on FirebaseException catch (error) {
+      return SignOutResult(
+        syncCompleted: syncComplete,
+        firebaseSignOutError: error,
+      );
+    } on TimeoutException catch (error) {
+      return SignOutResult(
+        syncCompleted: syncComplete,
+        firebaseSignOutError: error,
+      );
     }
   }
 
@@ -1602,6 +1888,7 @@ class Store extends ChangeNotifier {
     'sch',
     'water',
     'steps',
+    'distanceMeters',
     'act',
     'weights',
     'meals',
@@ -1611,6 +1898,7 @@ class Store extends ChangeNotifier {
     'activeW',
     'activeActivity',
     'lastWorkout',
+    'aiWeightPlan',
     'weightAnchorDate',
     'weightEstimateCache',
   ];
@@ -1638,53 +1926,51 @@ class Store extends ChangeNotifier {
     String? photoUrl,
   }) {
     final key = 'ft_account_$uid';
-    final raw = sp.getString(key);
+    final savedAccount = _accountSnapshots[key];
     Map<String, dynamic> account;
-    if (raw == null) {
+    if (savedAccount == null) {
       account = seed();
     } else {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic>) {
-          account = decoded;
-        } else if (decoded is Map) {
-          account = Map<String, dynamic>.from(decoded);
-        } else {
-          account = seed();
-        }
-      } catch (_) {
-        account = seed();
-      }
+      account = Map<String, dynamic>.from(
+        jsonDecode(jsonEncode(savedAccount)) as Map,
+      );
     }
 
     final normalized = normalizeEmail(email);
     account['accountId'] = uid;
     account['authProvider'] = 'google';
     account['user'] = normalized;
-    if (displayName.trim().isNotEmpty) account['name'] = displayName.trim();
+    final normalizedDisplayName = displayName.trim();
+    final savedName = account['name'];
+    if (normalizedDisplayName.isNotEmpty &&
+        (savedName is! String || savedName.trim().isEmpty)) {
+      account['name'] = normalizedDisplayName;
+    }
     final normalizedPhotoUrl = photoUrl?.trim();
     if (normalizedPhotoUrl != null && normalizedPhotoUrl.isNotEmpty) {
       account['photoUrl'] = normalizedPhotoUrl;
-    } else {
-      account.remove('photoUrl');
     }
 
     d = account;
     _sessionKey = key;
     _sessionProvider = 'google';
     _sessionEmail = normalized;
+    _sessionDisplayName = normalizedDisplayName;
     _sessionUid = uid;
     _writeSessionMeta();
-    save();
-    if (isCloudLinked) unawaited(_pullFromCloud());
+    _accountRestoring = _cloudReady;
+    _persistLocalSnapshot();
+    _notify();
+    _startCloudListener();
+    if (isCloudLinked) unawaited(_restoreCloudSnapshot(_sessionEpoch));
   }
 
   // ─────────── Cloud sync (Firestore users/{uid}) ───────────
   // Document shape: users/{uid} = {'data': <sanitized snapshot>,
   //                                'updatedAt': <revision int>}
   //
-  // Local SharedPreferences writes always happen first (save/saveQuiet), so
-  // the device copy survives any cloud failure; sync is strictly best-effort.
+  // Local SQLite writes always happen before cloud sync, so the device copy
+  // survives any cloud failure; sync is strictly best-effort.
   // `updatedAt` is the document revision: every push is a compare-and-set
   // against the revision the local snapshot was based on, executed inside a
   // Firestore transaction, so a stale writer can never silently clobber a
@@ -1739,6 +2025,111 @@ class Store extends ChangeNotifier {
     });
   }
 
+  void _startCloudListener() {
+    final previous = _cloudSubscription;
+    _cloudSubscription = null;
+    if (previous != null) unawaited(previous.cancel());
+
+    final uid = _sessionUid;
+    if (!_cloudReady || uid == null) return;
+    final epoch = _sessionEpoch;
+    _cloudSubscription = _cloud
+        .watch(uid)
+        .listen(
+          (_) {
+            if (_sessionEpoch == epoch && _sessionUid == uid) {
+              unawaited(_pullFromCloud());
+            }
+          },
+          onError: (Object error, StackTrace _) {
+            if (_sessionEpoch == epoch && _sessionUid == uid) {
+              _markSyncFailure(error);
+            }
+          },
+        );
+  }
+
+  FoodImageUploader get _foodImages => foodImageUploader ?? FoodImageService();
+
+  Future<Map<String, dynamic>> _cloudPayloadWithPhotos(
+    String uid,
+    int epoch,
+    Map<String, dynamic> snapshot,
+  ) async {
+    void saveUploadedImageId(List<Object> path, String photo, String imageId) {
+      Object? current = d;
+      for (final part in path) {
+        if (part is int && current is List && part < current.length) {
+          current = current[part];
+        } else if (part is String && current is Map) {
+          current = current[part];
+        } else {
+          return;
+        }
+      }
+      if (current is! Map || current['localPhoto'] != photo) return;
+      final currentImageId = current['imageId'];
+      final currentImageUrl = current['imageUrl'];
+      if (currentImageId is String && currentImageId.isNotEmpty ||
+          currentImageUrl is String && currentImageUrl.isNotEmpty) {
+        return;
+      }
+      current['imageId'] = imageId;
+      _persistLocalSnapshot();
+    }
+
+    Future<Object?> prepare(
+      Object? value, {
+      bool root = false,
+      List<Object> path = const [],
+    }) async {
+      if (value is Map) {
+        final photo = value['localPhoto'];
+        final imageId = value['imageId'];
+        final imageUrl = value['imageUrl'];
+        final hasRemoteImage =
+            imageId is String && imageId.isNotEmpty ||
+            imageUrl is String && imageUrl.isNotEmpty;
+        if (photo is String && !hasRemoteImage) {
+          final remoteImageId = await _foodImages.upload(
+            uid: uid,
+            bytes: base64Decode(photo),
+            fileName: 'meal-${DateTime.now().microsecondsSinceEpoch}.jpg',
+          );
+          if (_sessionEpoch != epoch || _sessionUid != uid) {
+            throw StateError('The active account changed during image upload.');
+          }
+          value['imageId'] = remoteImageId;
+          saveUploadedImageId(path, photo, remoteImageId);
+        }
+
+        final result = <String, dynamic>{};
+        for (final entry in value.entries) {
+          final key = entry.key.toString();
+          if (key == 'localPhoto' ||
+              (root && kCloudFieldDenylist.contains(key))) {
+            continue;
+          }
+          result[key] = await prepare(
+            entry.value,
+            path: [...path, entry.key.toString()],
+          );
+        }
+        return result;
+      }
+      if (value is List) {
+        return Future.wait([
+          for (var index = 0; index < value.length; index++)
+            prepare(value[index], path: [...path, index]),
+        ]);
+      }
+      return value;
+    }
+
+    final prepared = await prepare(snapshot, root: true);
+    return Map<String, dynamic>.from(prepared as Map);
+  }
+
   /// Guarded push of the sanitized local snapshot. [baseUpdatedAt] is the
   /// remote revision the caller just read (null = "expect no document"). When
   /// the guard trips the incoming document is preserved in
@@ -1750,9 +2141,18 @@ class Store extends ChangeNotifier {
     if (!_cloudReady || _sessionUid == null) return false;
     final uid = _sessionUid!;
     final epoch = _sessionEpoch;
-    final payload = sanitizedAccountForCloud(d);
-    final localHash = canonicalAccountHash(payload);
+    final editEpoch = _localEditEpoch;
     try {
+      final snapshot = Map<String, dynamic>.from(
+        jsonDecode(jsonEncode(d)) as Map,
+      );
+      final payload = await _cloudPayloadWithPhotos(uid, epoch, snapshot);
+      if (_sessionEpoch != epoch || _sessionUid != uid) return false;
+      if (_localEditEpoch != editEpoch) {
+        _scheduleSync();
+        return false;
+      }
+      final localHash = canonicalAccountHash(payload);
       final stamped = await _cloud.guardedWrite(uid, payload, baseUpdatedAt);
       if (_sessionEpoch != epoch) return false;
       if (stamped != null) {
@@ -1819,12 +2219,13 @@ class Store extends ChangeNotifier {
   Future<bool> _runSyncCycle(int epoch) async {
     final uid = _sessionUid!;
     try {
-      final state = _readSyncState(uid);
-      final localHash = canonicalAccountHash(sanitizedAccountForCloud(d));
-      final localDirty = state == null || state['hash'] != localHash;
-
+      await _flushLocalWrites();
+      final readEditEpoch = _localEditEpoch;
       final snap = await _cloud.read(uid);
       if (_sessionEpoch != epoch || _sessionUid != uid) return false;
+      final state = _readSyncState(uid);
+      final localHash = localAccountSyncHash(d);
+      final localDirty = state == null || state['hash'] != localHash;
 
       if (!snap.exists) {
         return await _pushToCloud(baseUpdatedAt: state?['updatedAt']);
@@ -1832,21 +2233,28 @@ class Store extends ChangeNotifier {
       final remote = snap.data;
       final remoteData = remote?['data'];
       if (remoteData is! Map) {
-        // Document without usable content: nothing to reconcile.
-        _markSyncSuccess();
-        return true;
+        if (remote != null) {
+          sp.setString(cloudConflictBackupKey(uid), jsonEncode(remote));
+        }
+        return await _pushToCloud(baseUpdatedAt: remote?['updatedAt']);
       }
       final remoteMap = Map<String, dynamic>.from(remoteData);
 
       final direction = resolveSyncDirection(
         hasSyncState: state != null,
         localDirty: localDirty,
-        localHasFitness: hasLocalFitnessData(d),
+        localHasFitness: hasLocalFitnessData(
+          d,
+          providerDisplayName: _sessionDisplayName,
+        ),
         remoteUpdatedAt: remote?['updatedAt'],
         lastLocalEdit: _lastLocalEdit(),
       );
 
       if (direction == SyncDirection.hydrate) {
+        if (_localEditEpoch != readEditEpoch) {
+          return await _runSyncCycle(epoch);
+        }
         _hydrateFromCloud(remoteMap, remote?['updatedAt'], uid);
         _markSyncSuccess();
         return true;
@@ -1902,6 +2310,41 @@ class Store extends ChangeNotifier {
     }
     if (cloudOptOut != null) candidate['cloudOptOut'] = cloudOptOut;
 
+    final localPhotosByUrl = <String, String>{};
+    void collectLocalPhotos(Object? value) {
+      if (value is Map) {
+        final url = value['imageId'] ?? value['imageUrl'];
+        final photo = value['localPhoto'];
+        if (url is String && photo is String) localPhotosByUrl[url] = photo;
+        for (final item in value.values) {
+          collectLocalPhotos(item);
+        }
+      } else if (value is List) {
+        for (final item in value) {
+          collectLocalPhotos(item);
+        }
+      }
+    }
+
+    void restoreLocalPhotos(Object? value) {
+      if (value is Map) {
+        final url = value['imageId'] ?? value['imageUrl'];
+        if (url is String && localPhotosByUrl.containsKey(url)) {
+          value['localPhoto'] = localPhotosByUrl[url];
+        }
+        for (final item in value.values.toList()) {
+          restoreLocalPhotos(item);
+        }
+      } else if (value is List) {
+        for (final item in value) {
+          restoreLocalPhotos(item);
+        }
+      }
+    }
+
+    collectLocalPhotos(d);
+    restoreLocalPhotos(candidate);
+
     _writeSyncState(
       uid,
       updatedAt: remoteUpdatedAt,
@@ -1914,12 +2357,7 @@ class Store extends ChangeNotifier {
 
     sp.setString(prehydrateBackupKey(uid), jsonEncode(d));
     d = candidate;
-    final payload = jsonEncode(d);
-    sp.setString('ft', payload);
-    final accountKey = _sessionKey;
-    if (accountKey != null && accountKey.isNotEmpty) {
-      sp.setString(accountKey, payload);
-    }
+    _persistLocalSnapshot();
     _notify();
   }
 
@@ -1928,97 +2366,42 @@ class Store extends ChangeNotifier {
     _disposed = true;
     _syncDebounce?.cancel();
     _syncDebounce = null;
+    final subscription = _cloudSubscription;
+    _cloudSubscription = null;
+    if (subscription != null) unawaited(subscription.cancel());
     super.dispose();
   }
 
-  // Daily reset: archive yesterday's food/steps/activity and start fresh.
+  // Daily reset: archive yesterday's food, movement totals and activities.
   // History is preserved: archived days are appended to 'log' before the
   // counters reset, and 'hist' (workout history) is never touched here.
   // The `d['day'] != n` guard makes repeated calls for the same date no-ops,
   // so callers may poll this safely (see Shell's minute timer). Retention
-  // runs inside that same guard: entries only become trimmable when the
-  // date advances, so the poll does no list walks between rollovers.
+  // histories are not pruned: saved records remain available indefinitely.
   void roll() {
     final n = today();
     if (d['day'] != n) {
-      if (meals.isNotEmpty || acts.isNotEmpty || steps > 0) {
+      final distanceMeters = d['distanceMeters'];
+      if (meals.isNotEmpty ||
+          acts.isNotEmpty ||
+          steps > 0 ||
+          distanceMeters is num && distanceMeters > 0) {
         final log = d['log'];
         (log is List ? log : (d['log'] = <dynamic>[])).add({
           'd': d['day'],
           'meals': d['meals'],
           'act': d['act'],
           'steps': d['steps'],
+          'distanceMeters': d['distanceMeters'] ?? 0.0,
         });
       }
       d['meals'] = [];
       d['act'] = [];
       d['steps'] = 0;
+      d['distanceMeters'] = 0.0;
       d['day'] = n;
       save();
-      applyRetention();
     }
-  }
-
-  // ─────────── Data retention (documented policy) ───────────
-  // 'water', 'log' and 'hist' grow forever without bounds. This conservative
-  // policy runs after every rollover and is the only place that trims them:
-  //
-  //   • water — keep the newest kWaterRetentionDays dated entries.
-  //   • log   — keep the newest kLogRetentionDays archived day entries.
-  //   • hist  — keep workouts from the last kHistRetentionDays days.
-  //
-  // Entries with a missing or unparseable date are always kept: data is only
-  // removed when it is provably older than its bound. Nothing else in the
-  // snapshot is modified, so account isolation and corrupt-snapshot
-  // recovery are unaffected. The bounds are deliberately loose (≈1 year)
-  // so streak/weekly/4-week aggregations are never impacted.
-  static const kWaterRetentionDays = 90;
-  static const kLogRetentionDays = 365;
-  static const kHistRetentionDays = 365;
-
-  static bool _olderThan(Object? day, int days) {
-    if (day is! String || day.isEmpty) return false;
-    return day.compareTo(daysAgo(days)) < 0;
-  }
-
-  /// Applies the retention policy above. Safe to call repeatedly; persists
-  /// only when something was actually removed.
-  void applyRetention() {
-    var changed = false;
-
-    final water = d['water'];
-    if (water is List && water.isNotEmpty) {
-      final kept = water
-          .where(
-            (w) => !_olderThan(w is Map ? w['d'] : null, kWaterRetentionDays),
-          )
-          .toList();
-      if (kept.length != water.length) {
-        d['water'] = kept;
-        changed = true;
-      }
-    }
-
-    final log = d['log'];
-    if (log is List && log.length > kLogRetentionDays) {
-      d['log'] = log.sublist(log.length - kLogRetentionDays);
-      changed = true;
-    }
-
-    final hist = d['hist'];
-    if (hist is List && hist.isNotEmpty) {
-      final kept = hist
-          .where(
-            (h) => !_olderThan(h is Map ? h['d'] : null, kHistRetentionDays),
-          )
-          .toList();
-      if (kept.length != hist.length) {
-        d['hist'] = kept;
-        changed = true;
-      }
-    }
-
-    if (changed) save();
   }
 
   List get routines => d['routines'] is List ? d['routines'] as List : const [];

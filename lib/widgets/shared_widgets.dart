@@ -25,14 +25,14 @@ Widget card({
       return Material(
         color: color ?? Theme.of(context).colorScheme.surface,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           side: BorderSide(color: tokens.divider, width: tokens.borderWidth),
         ),
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           onTap: onTap,
           child: Padding(
-            padding: pad ?? const EdgeInsets.all(kGapLg),
+            padding: pad ?? const EdgeInsets.all(18),
             child: SizedBox(width: double.infinity, child: child),
           ),
         ),
@@ -262,7 +262,7 @@ Widget tag(String s) => Builder(
       s,
       style: TextStyle(
         color: primaryOf(context),
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: FontWeight.w700,
       ),
     ),
@@ -277,7 +277,7 @@ Widget h3(String s, {Widget? trailing}) => Padding(
       Flexible(
         child: Text(
           s,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
       ),
       ?trailing,
@@ -315,7 +315,7 @@ Widget hdr(
       k.toUpperCase(),
       style: TextStyle(
         color: primaryOf(c),
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: FontWeight.w700,
         letterSpacing: .8,
       ),
@@ -323,7 +323,7 @@ Widget hdr(
     Text(
       t,
       style: TextStyle(
-        fontSize: 28,
+        fontSize: 30,
         fontWeight: FontWeight.w800,
         height: 1.1,
         color: Theme.of(c).colorScheme.onSurface,
@@ -429,11 +429,16 @@ class _FormDialog extends StatefulWidget {
 
 class _FormDialogState extends State<_FormDialog> {
   late final Map<String, TextEditingController> ctl;
+  late final Map<String, bool> _passwordVisible;
 
   @override
   void initState() {
     super.initState();
     ctl = {for (final f in widget.fs) f.k: TextEditingController(text: f.v)};
+    _passwordVisible = {
+      for (final f in widget.fs.where((field) => field.type == 'pass'))
+        f.k: false,
+    };
   }
 
   @override
@@ -444,53 +449,72 @@ class _FormDialogState extends State<_FormDialog> {
     super.dispose();
   }
 
-  Widget buildField(F f) => f.type == 'choice'
-      ? StatefulBuilder(
-          builder: (ctx, ss) => DropdownButtonFormField<String>(
-            initialValue: ctl[f.k]!.text,
-            decoration: InputDecoration(labelText: f.label),
-            items: [
-              for (final o in f.opts)
-                DropdownMenuItem(value: o, child: Text(o)),
-            ],
-            onChanged: (v) {
-              if (v != null) ss(() => ctl[f.k]!.text = v);
-            },
-          ),
-        )
-      : TextField(
-          controller: ctl[f.k],
-          readOnly: f.type == 'date' || f.type == 'time',
-          obscureText: f.type == 'pass',
-          keyboardType: f.type == 'number'
-              ? const TextInputType.numberWithOptions(decimal: true)
-              : null,
+  Widget buildField(F f) {
+    if (f.type == 'choice') {
+      return StatefulBuilder(
+        builder: (ctx, ss) => DropdownButtonFormField<String>(
+          initialValue: ctl[f.k]!.text,
           decoration: InputDecoration(labelText: f.label),
-          onTap: () async {
-            if (f.type == 'date') {
-              final p = await showDatePicker(
-                context: context,
-                initialDate:
-                    DateTime.tryParse(ctl[f.k]!.text) ?? DateTime.now(),
-                firstDate: DateTime(2000),
-                lastDate: DateTime(2100),
-              );
-              if (p == null || !mounted) return;
-              ctl[f.k]!.text = isoOf(p);
-            } else if (f.type == 'time') {
-              final parts = ctl[f.k]!.text.split(':');
-              final hour = parts.isNotEmpty ? int.tryParse(parts[0]) : null;
-              final minute = parts.length > 1 ? int.tryParse(parts[1]) : null;
-              final p = await showTimePicker(
-                context: context,
-                initialTime: TimeOfDay(hour: hour ?? 18, minute: minute ?? 0),
-              );
-              if (p == null || !mounted) return;
-              ctl[f.k]!.text =
-                  '${p.hour.toString().padLeft(2, '0')}:${p.minute.toString().padLeft(2, '0')}';
-            }
+          items: [
+            for (final o in f.opts) DropdownMenuItem(value: o, child: Text(o)),
+          ],
+          onChanged: (v) {
+            if (v != null) ss(() => ctl[f.k]!.text = v);
           },
-        );
+        ),
+      );
+    }
+
+    final isPassword = f.type == 'pass';
+    final passwordVisible = _passwordVisible[f.k] ?? false;
+    return TextField(
+      controller: ctl[f.k],
+      readOnly: f.type == 'date' || f.type == 'time',
+      obscureText: isPassword && !passwordVisible,
+      keyboardType: f.type == 'number'
+          ? const TextInputType.numberWithOptions(decimal: true)
+          : null,
+      decoration: InputDecoration(
+        labelText: f.label,
+        suffixIcon: isPassword
+            ? IconButton(
+                tooltip:
+                    '${passwordVisible ? 'Hide' : 'Show'} ${f.label.toLowerCase()}',
+                icon: Icon(
+                  passwordVisible
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                ),
+                onPressed: () =>
+                    setState(() => _passwordVisible[f.k] = !passwordVisible),
+              )
+            : null,
+      ),
+      onTap: () async {
+        if (f.type == 'date') {
+          final p = await showDatePicker(
+            context: context,
+            initialDate: DateTime.tryParse(ctl[f.k]!.text) ?? DateTime.now(),
+            firstDate: DateTime(2000),
+            lastDate: DateTime(2100),
+          );
+          if (p == null || !mounted) return;
+          ctl[f.k]!.text = isoOf(p);
+        } else if (f.type == 'time') {
+          final parts = ctl[f.k]!.text.split(':');
+          final hour = parts.isNotEmpty ? int.tryParse(parts[0]) : null;
+          final minute = parts.length > 1 ? int.tryParse(parts[1]) : null;
+          final p = await showTimePicker(
+            context: context,
+            initialTime: TimeOfDay(hour: hour ?? 18, minute: minute ?? 0),
+          );
+          if (p == null || !mounted) return;
+          ctl[f.k]!.text =
+              '${p.hour.toString().padLeft(2, '0')}:${p.minute.toString().padLeft(2, '0')}';
+        }
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) => AlertDialog(

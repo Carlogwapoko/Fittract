@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
@@ -65,6 +67,7 @@ final class MealScanResult {
     required this.mealType,
     required this.ingredients,
     this.nutrition,
+    this.nutritionUnavailable = false,
   });
 
   final bool isFood;
@@ -72,6 +75,7 @@ final class MealScanResult {
   final String mealType;
   final List<MealIngredient> ingredients;
   final NutritionEstimate? nutrition;
+  final bool nutritionUnavailable;
 }
 
 abstract interface class FoodAiService {
@@ -98,49 +102,44 @@ final class FoodAiException implements Exception {
 }
 
 final class WorkerFoodAiService implements FoodAiService {
+  /// Lets other AI features (for example the weight plan) reuse the same
+  /// authenticated, retrying connection to the worker.
+  Future<Map<String, dynamic>> callWorker(Map<String, Object?> data) =>
+      _call(data);
+
   const WorkerFoodAiService();
 
-  static const _workerUrl = String.fromEnvironment('FOOD_API_URL');
+  static final http.Client _client = http.Client();
+
+  static const _workerUrl = String.fromEnvironment(
+    'FOOD_API_URL',
+    defaultValue:
+        'https://fittrack-food-api.carloplaza2023.workers.dev/api/food',
+  );
+
+  // Counts photo-match requests so rapid ingredient edits only trigger one
+  // Gemini call (the last one).
+  static int _matchGeneration = 0;
 
   @override
   Future<Uint8List> compressPhoto(Uint8List imageBytes) async {
     if (imageBytes.isEmpty) {
       throw ArgumentError.value(imageBytes, 'imageBytes', 'Cannot be empty.');
     }
-    final decodedImage = img.decodeImage(imageBytes);
-    if (decodedImage == null) {
+    // Decoding/resizing/encoding is CPU heavy in pure Dart. Run it off the UI
+    // isolate so the app does not freeze while "analyzing".
+    final jpeg = await compute(_compressToJpeg, imageBytes);
+    if (jpeg == null) {
       throw const FormatException(
         'This photo format is not supported. Choose a JPEG or PNG image.',
       );
-    }
-    final decoded = img.bakeOrientation(decodedImage);
-    final longestSide = decoded.width > decoded.height
-        ? decoded.width
-        : decoded.height;
-    final resized = longestSide > 1024
-        ? img.copyResize(
-            decoded,
-            width: decoded.width >= decoded.height
-                ? 1024
-                : (decoded.width * 1024 / decoded.height).round(),
-            height: decoded.height > decoded.width
-                ? 1024
-                : (decoded.height * 1024 / decoded.width).round(),
-            interpolation: img.Interpolation.average,
-          )
-        : decoded;
-    var quality = 80;
-    var jpeg = img.encodeJpg(resized, quality: quality);
-    while (jpeg.length > 1024 * 1024 && quality > 45) {
-      quality -= 5;
-      jpeg = img.encodeJpg(resized, quality: quality);
     }
     if (jpeg.length > 1024 * 1024) {
       throw const FormatException(
         'This photo is too large to scan. Choose a smaller image.',
       );
     }
-    return Uint8List.fromList(jpeg);
+    return jpeg;
   }
 
   @override
@@ -174,6 +173,7 @@ final class WorkerFoodAiService implements FoodAiService {
               'ingredients': data['ingredients'],
             })
           : null,
+      nutritionUnavailable: data['nutrition_unavailable'] == true,
     );
   }
 
@@ -202,6 +202,11 @@ final class WorkerFoodAiService implements FoodAiService {
     Uint8List jpegBytes,
     List<MealIngredient> ingredients,
   ) async {
+    final generation = ++_matchGeneration;
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+    // A newer edit arrived while waiting. Skip this network call; the screen
+    // already ignores results of superseded requests.
+    if (generation != _matchGeneration) return true;
     final data = await _call({
       'action': 'match',
       'imageBase64': base64Encode(jpegBytes),
@@ -216,7 +221,35 @@ final class WorkerFoodAiService implements FoodAiService {
     return data['matches_photo'] as bool;
   }
 
+  /// Calls the worker and quietly retries short-lived failures (flaky mobile
+  /// connection, worker/Gemini briefly overloaded) before showing an error.
   Future<Map<String, dynamic>> _call(Map<String, Object?> data) async {
+    const retryDelays = [Duration(milliseconds: 350)];
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _callOnce(data);
+      } on FoodAiException catch (error) {
+        final transient = const {
+          'network',
+          'unavailable',
+          'resource-exhausted',
+        }.contains(error.code);
+        if (!transient) rethrow;
+        if (attempt >= retryDelays.length) {
+          // The server answered (so the connection is fine) but could not
+          // finish. Use a different code so the screen shows the real message
+          // instead of "Check your connection".
+          if (error.code == 'unavailable') {
+            throw FoodAiException('service-error', error.message);
+          }
+          rethrow;
+        }
+      }
+      await Future<void>.delayed(retryDelays[attempt]);
+    }
+  }
+
+  Future<Map<String, dynamic>> _callOnce(Map<String, Object?> data) async {
     if (_workerUrl.isEmpty) {
       throw const FoodAiException(
         'configuration',
@@ -230,7 +263,22 @@ final class WorkerFoodAiService implements FoodAiService {
         'Sign in to scan food. You can still add a meal manually.',
       );
     }
-    final token = await user.getIdToken();
+    final String? token;
+    try {
+      token = await user
+          .getIdToken()
+          .timeout(const Duration(seconds: 10));
+    } on FirebaseAuthException catch (error) {
+      throw FoodAiException(
+        error.code == 'network-request-failed' ? 'network' : 'unauthenticated',
+        error.message ?? 'Could not verify your account for food scanning.',
+      );
+    } on TimeoutException {
+      throw const FoodAiException(
+        'timeout',
+        'Account verification took too long. Please try scanning again.',
+      );
+    }
     if (token == null || token.isEmpty) {
       throw const FoodAiException(
         'unauthenticated',
@@ -254,7 +302,7 @@ final class WorkerFoodAiService implements FoodAiService {
     }
 
     try {
-      final response = await http
+      final response = await _client
           .post(
             endpoint,
             headers: {
@@ -264,7 +312,7 @@ final class WorkerFoodAiService implements FoodAiService {
             },
             body: jsonEncode(data),
           )
-          .timeout(const Duration(seconds: 120));
+          .timeout(const Duration(seconds: 30));
       final Object? decoded;
       try {
         decoded = jsonDecode(response.body);
@@ -294,8 +342,13 @@ final class WorkerFoodAiService implements FoodAiService {
       return result;
     } on http.ClientException {
       throw const FoodAiException(
-        'unavailable',
+        'network',
         'Could not reach the food service. Check your connection and try again.',
+      );
+    } on TimeoutException {
+      throw const FoodAiException(
+        'timeout',
+        'The food service took too long to respond. Please try again.',
       );
     }
   }
@@ -373,3 +426,33 @@ final class WorkerFoodAiService implements FoodAiService {
 String _formatAmount(double value) => value == value.roundToDouble()
     ? value.toStringAsFixed(0)
     : value.toStringAsFixed(1);
+
+/// Top-level so it can run in a background isolate via `compute`.
+/// Returns null when the bytes are not a decodable image.
+Uint8List? _compressToJpeg(Uint8List imageBytes) {
+  final decodedImage = img.decodeImage(imageBytes);
+  if (decodedImage == null) return null;
+  final decoded = img.bakeOrientation(decodedImage);
+  final longestSide = decoded.width > decoded.height
+      ? decoded.width
+      : decoded.height;
+  final resized = longestSide > 1024
+      ? img.copyResize(
+          decoded,
+          width: decoded.width >= decoded.height
+              ? 1024
+              : (decoded.width * 1024 / decoded.height).round(),
+          height: decoded.height > decoded.width
+              ? 1024
+              : (decoded.height * 1024 / decoded.width).round(),
+          interpolation: img.Interpolation.average,
+        )
+      : decoded;
+  var quality = 80;
+  var jpeg = img.encodeJpg(resized, quality: quality);
+  while (jpeg.length > 1024 * 1024 && quality > 45) {
+    quality -= 5;
+    jpeg = img.encodeJpg(resized, quality: quality);
+  }
+  return Uint8List.fromList(jpeg);
+}

@@ -1,12 +1,42 @@
 const FIREBASE_JWKS_URL =
   'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+// Models are tried in order. If one is retired (404), rate-limited or
+// overloaded, the next one is used. You can override the first two without
+// redeploying code by setting GEMINI_MODEL / GEMINI_FALLBACK_MODEL variables.
+const DEFAULT_GEMINI_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+];
+const GEMINI_TIMEOUT_MS = 12000;
+// Stop starting new Gemini attempts after this long so the app (60s timeout)
+// always gets an answer.
+const GEMINI_DEADLINE_MS = 30000;
+const USDA_TIMEOUT_MS = 8000;
 const MAX_IMAGE_BYTES = 1024 * 1024;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const USDA_CACHE_TTL_MS = 30 * 60 * 1000;
 const MAX_USDA_CACHE_ENTRIES = 256;
 const VALID_TYPES = new Set(['Breakfast', 'Lunch', 'Snack', 'Dinner']);
 const VALID_UNITS = new Set(['g', 'ml', 'pcs']);
+const PLAN_SEXES = new Set(['male', 'female', 'other']);
+const PLAN_ACTIVITY_LEVELS = new Set([
+  'sedentary',
+  'light',
+  'moderate',
+  'active',
+  'very_active',
+]);
+const PLAN_GOAL_TYPES = new Set(['lose', 'gain', 'maintain']);
+const WEEK_DAYS = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];
 const MACRO_IDS = {calories: 1008, protein: 1003, carbs: 1005, fat: 1004};
 const usdaNutritionCache = new Map();
 
@@ -87,7 +117,23 @@ export async function handleRequest(request, env, fetchImpl = fetch) {
     switch (data.action) {
       case 'scan': {
         const image = decodeImage(data.imageBase64, data.mimeType);
-        return respond(await identifyMeal(image, env, fetchImpl));
+        const meal = await identifyMeal(image, env, fetchImpl);
+        if (!meal.is_food) return respond(meal);
+        try {
+          const nutrition = await calculateNutrition(
+            meal.ingredients,
+            env,
+            fetchImpl,
+          );
+          return respond({...meal, ...nutrition});
+        } catch (error) {
+          if (!(error instanceof ApiError)) throw error;
+          console.error('food_scan_nutrition_failed', {
+            code: error.code,
+            message: error.message,
+          });
+          return respond({...meal, nutrition_unavailable: true});
+        }
       }
       case 'nutrition': {
         const ingredients = validateIngredients(data.ingredients);
@@ -99,11 +145,15 @@ export async function handleRequest(request, env, fetchImpl = fetch) {
         const result = await comparePhoto(image, ingredients, env, fetchImpl);
         return respond({matches_photo: result});
       }
+      case 'plan': {
+        const profile = validatePlanProfile(data.profile);
+        return respond(await createWeightPlan(profile, env, fetchImpl));
+      }
       default:
         throw new ApiError(
           400,
           'invalid-argument',
-          'Choose scan, nutrition, or match.',
+          'Choose scan, nutrition, match, or plan.',
         );
     }
   } catch (error) {
@@ -330,6 +380,165 @@ async function identifyMeal(image, env, fetchImpl) {
   };
 }
 
+function validatePlanProfile(value) {
+  const invalid = () =>
+    new ApiError(400, 'invalid-argument', 'The weight plan details are invalid.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
+  const number = (input, min, max, {integer = false, nullable = false} = {}) => {
+    if (nullable && (input === null || input === undefined)) return null;
+    const parsed = Number(input);
+    if (
+      typeof input === 'boolean' ||
+      input === '' ||
+      !Number.isFinite(parsed) ||
+      parsed < min ||
+      parsed > max ||
+      (integer && !Number.isInteger(parsed))
+    ) {
+      throw invalid();
+    }
+    return parsed;
+  };
+  const choice = (input, allowed) => {
+    if (typeof input !== 'string' || !allowed.has(input)) throw invalid();
+    return input;
+  };
+  const date = (input) => {
+    if (input === null || input === undefined) return null;
+    const parsedDate =
+      typeof input === 'string' ? Date.parse(`${input}T00:00:00.000Z`) : NaN;
+    if (
+      typeof input !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(input) ||
+      !Number.isFinite(parsedDate) ||
+      new Date(parsedDate).toISOString().slice(0, 10) !== input
+    ) {
+      throw invalid();
+    }
+    return input;
+  };
+  if (typeof value.restricted !== 'boolean') throw invalid();
+  return {
+    age: number(value.age, 13, 100, {integer: true}),
+    sex: choice(value.sex, PLAN_SEXES),
+    heightCm: number(value.height_cm, 100, 250),
+    currentKg: number(value.current_kg, 20, 300),
+    targetKg: number(value.target_kg, 20, 300),
+    activityLevel: choice(value.activity_level, PLAN_ACTIVITY_LEVELS),
+    workoutsPerWeek: number(value.workouts_per_week, 1, 7, {integer: true}),
+    targetDate: date(value.target_date),
+    projectedTargetDate: date(value.projected_target_date),
+    goalType: choice(value.goal_type, PLAN_GOAL_TYPES),
+    weeksToGoal: number(value.weeks_to_goal, 0, 1040, {nullable: true}),
+    dailyCalories: number(value.daily_calories, 500, 6000),
+    maintenanceCalories: number(value.maintenance_calories, 500, 6000),
+    exerciseKcalPerWorkout: number(value.exercise_kcal_per_workout, 0, 2500),
+    recommendedWorkouts: number(value.recommended_workouts, 1, 7, {integer: true}),
+    weeklyChangeKg: number(value.weekly_change_kg, -2, 2),
+    restricted: value.restricted,
+  };
+}
+
+function cleanText(value, maxLength) {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+    : '';
+}
+
+async function createWeightPlan(profile, env, fetchImpl) {
+  const facts = [
+    `age: ${profile.age}`,
+    `sex: ${profile.sex}`,
+    `height_cm: ${profile.heightCm}`,
+    `current_weight_kg: ${profile.currentKg}`,
+    `target_weight_kg: ${profile.targetKg}`,
+    `activity_level: ${profile.activityLevel}`,
+    `goal_type: ${profile.goalType}`,
+    `target_date: ${profile.targetDate ?? 'not set'}`,
+    `projected_target_date: ${profile.projectedTargetDate ?? 'not set'}`,
+    `weeks_to_goal: ${profile.weeksToGoal ?? 'not set'}`,
+    `planned_weekly_change_kg: ${profile.weeklyChangeKg}`,
+    `daily_calorie_target: ${profile.dailyCalories}`,
+    `maintenance_calories: ${profile.maintenanceCalories}`,
+    `workouts_per_week: ${profile.workoutsPerWeek}`,
+    `recommended_workouts_per_week: ${profile.recommendedWorkouts}`,
+    `exercise_kcal_per_workout: ${profile.exerciseKcalPerWorkout}`,
+    `restricted: ${profile.restricted}`,
+  ].join('\n');
+  const response = await generateJson(
+    [{
+      text:
+        'You are a supportive, safety-conscious fitness coach inside a weight-management app. ' +
+        'The app has ALREADY calculated every number below with a standard formula. ' +
+        'Use them exactly. Never recalculate, change or contradict them.\n' +
+        'Write a short personalised plan in plain English with no emojis.\n' +
+        'Rules:\n' +
+        `- Give exactly ${profile.workoutsPerWeek} workout days, spread across the week with rest days, ` +
+        'each with a day, a short focus and minutes between 20 and 75.\n' +
+        '- Use projected_target_date as the sole realistic completion date; do not substitute target_date.\n' +
+        '- Follow workouts_per_week exactly; do not recommend a different weekly workout count.\n' +
+        '- goal_type lose: mix cardio and strength. gain: mainly strength training. maintain: balanced.\n' +
+        '- Give 3 practical nutrition tips. No extreme dieting, fasting, supplements or named diets.\n' +
+        '- Never suggest eating below daily_calorie_target.\n' +
+        '- If restricted is true, do not discuss losing or gaining weight. Encourage healthy habits and ' +
+        'talking to a doctor or dietitian.\n' +
+        '- Do not diagnose or give medical advice. Keep the summary under 60 words.\n' +
+        '- caution: one short safety reminder (for example: stop if you feel pain or dizziness).\n' +
+        'Data:\n' + facts,
+    }],
+    {
+      type: 'OBJECT',
+      properties: {
+        summary: {type: 'STRING'},
+        workouts: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              day: {type: 'STRING', enum: WEEK_DAYS},
+              focus: {type: 'STRING'},
+              minutes: {type: 'INTEGER'},
+            },
+            required: ['day', 'focus', 'minutes'],
+          },
+        },
+        nutrition_tips: {type: 'ARRAY', items: {type: 'STRING'}},
+        motivation: {type: 'STRING'},
+        caution: {type: 'STRING'},
+      },
+      required: ['summary', 'workouts', 'nutrition_tips', 'motivation', 'caution'],
+    },
+    env,
+    fetchImpl,
+  );
+
+  const workouts = (Array.isArray(response.workouts) ? response.workouts : [])
+    .map((item) => ({
+      day: WEEK_DAYS.includes(item?.day) ? item.day : '',
+      focus: cleanText(item?.focus, 120),
+      minutes: Math.min(120, Math.max(10, Math.round(Number(item?.minutes) || 0))),
+    }))
+    .filter((item) => item.day && item.focus && Number.isFinite(item.minutes))
+    .slice(0, profile.workoutsPerWeek);
+  const tips = (Array.isArray(response.nutrition_tips) ? response.nutrition_tips : [])
+    .map((tip) => cleanText(tip, 180))
+    .filter(Boolean)
+    .slice(0, 4);
+  const summary = cleanText(response.summary, 400);
+  if (!summary || workouts.length === 0 || tips.length === 0) {
+    throw new ApiError(502, 'data-loss', 'The plan was incomplete. Try again.');
+  }
+  return {
+    plan: {
+      summary,
+      workouts,
+      nutrition_tips: tips,
+      motivation: cleanText(response.motivation, 200),
+      caution: cleanText(response.caution, 200),
+    },
+  };
+}
+
 async function comparePhoto(image, ingredients, env, fetchImpl) {
   const response = await generateJson(
     [{
@@ -355,26 +564,24 @@ async function comparePhoto(image, ingredients, env, fetchImpl) {
 }
 
 async function calculateNutrition(ingredients, env, fetchImpl) {
-  const resolved = [];
-  for (let start = 0; start < ingredients.length; start += 4) {
-    const group = ingredients.slice(start, start + 4);
-    resolved.push(...await Promise.all(group.map(async (ingredient) => {
-      try {
-        const nutrition = await findUsdaNutrition(ingredient.name, env, fetchImpl);
-        return {
-          ...ingredient,
-          grams: amountInGrams(ingredient),
-          per100g: nutrition,
-          source: nutrition ? 'USDA FoodData Central' : null,
-        };
-      } catch (error) {
-        console.error('food_usda_lookup_failed', {
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return {...ingredient, grams: amountInGrams(ingredient), per100g: null, source: null};
-      }
-    })));
-  }
+  // Look up every ingredient in parallel: total time is the slowest lookup,
+  // not the sum of the batches.
+  const resolved = await Promise.all(ingredients.map(async (ingredient) => {
+    try {
+      const nutrition = await findUsdaNutrition(ingredient.name, env, fetchImpl);
+      return {
+        ...ingredient,
+        grams: amountInGrams(ingredient),
+        per100g: nutrition,
+        source: nutrition ? 'USDA FoodData Central' : null,
+      };
+    } catch (error) {
+      console.error('food_usda_lookup_failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return {...ingredient, grams: amountInGrams(ingredient), per100g: null, source: null};
+    }
+  }));
   const missing = resolved.filter((item) => item.per100g === null);
   if (missing.length) {
     const estimate = await estimateMissingNutrition(missing, env, fetchImpl);
@@ -418,19 +625,23 @@ async function findUsdaNutrition(name, env, fetchImpl) {
   url.searchParams.set('dataType', 'Foundation,SR Legacy');
   url.searchParams.set('pageSize', '5');
   url.searchParams.set('api_key', env.USDA_API_KEY);
-  const response = await fetchWithTimeout(fetchImpl, url, {}, 15000);
+  const response = await fetchWithTimeout(fetchImpl, url, {}, USDA_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`USDA FoodData Central returned HTTP ${response.status}.`);
   }
   const result = await response.json();
   const food = selectUsdaFood(result.foods, name);
-  let nutrition = null;
-  if (food && Number.isInteger(Number(food.fdcId)) && Number(food.fdcId) > 0) {
+
+  // The search response already carries per-100g nutrients, so reuse them and
+  // skip the second HTTP round trip. Only fall back to the detail record when
+  // the search result is missing a macro.
+  let nutrition = food ? readUsdaNutrition(food.foodNutrients) : null;
+  if (!nutrition && food && Number.isInteger(Number(food.fdcId)) && Number(food.fdcId) > 0) {
     const detailUrl = new URL(
       `https://api.nal.usda.gov/fdc/v1/food/${Number(food.fdcId)}`,
     );
     detailUrl.searchParams.set('api_key', env.USDA_API_KEY);
-    const detailResponse = await fetchWithTimeout(fetchImpl, detailUrl, {}, 15000);
+    const detailResponse = await fetchWithTimeout(fetchImpl, detailUrl, {}, USDA_TIMEOUT_MS);
     if (!detailResponse.ok) {
       throw new Error(`USDA food detail returned HTTP ${detailResponse.status}.`);
     }
@@ -584,36 +795,99 @@ async function estimateMissingNutrition(ingredients, env, fetchImpl) {
   return response.items;
 }
 
+function geminiModels(env) {
+  const configured = [env.GEMINI_MODEL, env.GEMINI_FALLBACK_MODEL]
+    .filter((name) => typeof name === 'string' && name.trim())
+    .map((name) => name.trim());
+  return [...new Set([...configured, ...DEFAULT_GEMINI_MODELS])];
+}
+
 async function generateJson(parts, responseSchema, env, fetchImpl) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
   const contentParts = parts.flatMap((part) => {
     const result = [];
     if (part.text) result.push({text: part.text});
     if (part.inlineData) result.push({inlineData: part.inlineData});
     return result;
   });
-  const response = await fetchWithTimeout(fetchImpl, url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': env.GEMINI_API_KEY,
+  const buildBody = (withThinkingConfig) => JSON.stringify({
+    contents: [{parts: contentParts}],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema,
+      temperature: 0.1,
+      maxOutputTokens: 4096,
+      // Keep "thinking" minimal for fast scans. Some models reject this
+      // setting (HTTP 400), so it is dropped automatically for them.
+      ...(withThinkingConfig ? {thinkingConfig: {thinkingBudget: 0}} : {}),
     },
-    body: JSON.stringify({
-      contents: [{parts: contentParts}],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema,
-        temperature: 0.1,
-      },
-    }),
-  }, 30000);
-  if (!response.ok) {
+  });
+
+  const startedAt = Date.now();
+  let lastStatus = 0;
+  let response = null;
+  models: for (const model of geminiModels(env)) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    let withThinkingConfig = true;
+    let tries = 0;
+    while (tries < 2) {
+      if (Date.now() - startedAt > GEMINI_DEADLINE_MS) break models;
+      let attempt;
+      try {
+        attempt = await fetchWithTimeout(fetchImpl, url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': env.GEMINI_API_KEY,
+          },
+          body: buildBody(withThinkingConfig),
+        }, GEMINI_TIMEOUT_MS);
+      } catch {
+        // Timeout / network error to Gemini: try again, then the next model.
+        lastStatus = 0;
+        tries++;
+        continue;
+      }
+      if (attempt.ok) {
+        response = attempt;
+        break models;
+      }
+      lastStatus = attempt.status;
+      let detail = '';
+      try {
+        detail = (await attempt.text()).slice(0, 300);
+      } catch {
+        // ignore
+      }
+      // Visible with: npx wrangler tail
+      console.error('gemini_request_failed', {model, status: attempt.status, detail});
+      if (attempt.status === 400 && withThinkingConfig) {
+        withThinkingConfig = false;
+        continue;
+      }
+      if (attempt.status === 429 || attempt.status >= 500) {
+        tries++;
+        if (tries < 2) await new Promise((resolve) => setTimeout(resolve, 700));
+        continue;
+      }
+      // 401/403/404/other 4xx: this model will not work, go to the next one.
+      break;
+    }
+  }
+  if (!response) {
+    if (lastStatus === 401 || lastStatus === 403) {
+      throw new ApiError(
+        502,
+        'configuration',
+        `Gemini rejected the API key or access is blocked (HTTP ${lastStatus}). Check the GEMINI_API_KEY secret.`,
+      );
+    }
+    const busy = lastStatus === 429 || lastStatus === 503;
     throw new ApiError(
-      response.status === 429 ? 429 : 502,
-      response.status === 429 ? 'resource-exhausted' : 'unavailable',
-      response.status === 429
+      busy ? 429 : 502,
+      busy ? 'resource-exhausted' : 'unavailable',
+      busy
         ? 'The food service is busy right now. Try again in a moment.'
-        : 'Gemini could not process this request. Try again.',
+        : `Gemini could not process this request${lastStatus ? ` (HTTP ${lastStatus})` : ''}. Try again.`,
     );
   }
   let payload;

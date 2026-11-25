@@ -1,20 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fittract/store/store.dart';
+import 'package:fittract/services/food_image_service.dart';
 
 /// In-memory stand-in for `users/{uid}` so revision conflicts, stale data,
 /// transport failures and account isolation can be driven deterministically
 /// without a live Firebase project.
 class FakeCloudUserDoc implements CloudUserDoc {
   final docs = <String, Map<String, dynamic>>{};
+  final _watchers = <String, StreamController<CloudDocSnapshot>>{};
   bool failRead = false;
   bool failWrite = false;
   Completer<void>? readGate;
+  int reads = 0;
   int guardedWrites = 0;
   int forceWrites = 0;
 
@@ -36,6 +40,7 @@ class FakeCloudUserDoc implements CloudUserDoc {
   /// Seed a document as another device would have left it.
   void put(String uid, Map<String, dynamic> data, int updatedAt) {
     docs[uid] = {'data': deep(data), 'updatedAt': updatedAt};
+    _emit(uid);
   }
 
   Map<String, dynamic>? doc(String uid) => docs[uid];
@@ -44,7 +49,21 @@ class FakeCloudUserDoc implements CloudUserDoc {
       docs[uid]?['data'] as Map<String, dynamic>?;
 
   @override
+  Stream<CloudDocSnapshot> watch(String uid) =>
+      (_watchers[uid] ??= StreamController<CloudDocSnapshot>.broadcast())
+          .stream;
+
+  void _emit(String uid) {
+    final controller = _watchers[uid];
+    final doc = docs[uid];
+    if (controller != null && doc != null) {
+      controller.add(CloudDocSnapshot(exists: true, data: deep(doc)));
+    }
+  }
+
+  @override
   Future<CloudDocSnapshot> read(String uid) async {
+    reads++;
     final gate = readGate;
     if (gate != null) await gate.future;
     if (failRead) throw StateError('cloud read failed');
@@ -66,6 +85,7 @@ class FakeCloudUserDoc implements CloudUserDoc {
     if (doc == null && baseUpdatedAt != null) return null;
     final revision = _nextRevision();
     docs[uid] = {'data': deep(payload), 'updatedAt': revision};
+    _emit(uid);
     return revision;
   }
 
@@ -75,8 +95,36 @@ class FakeCloudUserDoc implements CloudUserDoc {
     if (failWrite) throw StateError('cloud write failed');
     final revision = _nextRevision();
     docs[uid] = {'data': deep(payload), 'updatedAt': revision};
+    _emit(uid);
     return revision;
   }
+}
+
+class FakeFoodImageUploader implements FoodImageUploader {
+  Uint8List? uploadedBytes;
+  Completer<void>? uploadGate;
+  Completer<void>? uploadStarted;
+
+  @override
+  Future<String> upload({
+    required String uid,
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    if (uploadStarted != null && !uploadStarted!.isCompleted) {
+      uploadStarted!.complete();
+    }
+    final gate = uploadGate;
+    if (gate != null) await gate.future;
+    uploadedBytes = bytes;
+    return 'image-$uid';
+  }
+
+  @override
+  Future<Uint8List?> download({
+    required String uid,
+    required String imageId,
+  }) async => null;
 }
 
 /// A realistic cloud document for a Google session: same identity fields the
@@ -155,8 +203,12 @@ void main() {
     return s;
   }
 
-  Future<Store> newGoogleStore(FakeCloudUserDoc cloud, String uid) async {
-    final s = await newStore();
+  Future<Store> newGoogleStore(
+    FakeCloudUserDoc cloud,
+    String uid, {
+    bool attachCloud = false,
+  }) async {
+    final s = await newStore(cloud: attachCloud ? cloud : null);
     s.activateGoogleAccount(
       uid: uid,
       email: '$uid@example.com',
@@ -164,6 +216,30 @@ void main() {
     );
     return s;
   }
+
+  test('cloud restore can be deferred until local startup completes', () async {
+    const uid = 'deferred-cloud-user';
+    const key = 'ft_account_$uid';
+    final localStore = Store();
+    created.add(localStore);
+    await localStore.init();
+    localStore.activateGoogleAccount(
+      uid: uid,
+      email: '$uid@example.com',
+      displayName: 'Deferred User',
+    );
+    await localStore.readStoredAccount(key);
+
+    final cloud = FakeCloudUserDoc();
+    final restoredStore = Store()..cloudUserDoc = cloud;
+    created.add(restoredStore);
+    await restoredStore.init(syncCloud: false);
+    expect(cloud.reads, 0);
+
+    await restoredStore.startCloudSync();
+    expect(cloud.reads, 1);
+    expect(restoredStore.isAccountRestoring, isFalse);
+  });
 
   test(
     'cloud email account signs in on a fresh device and hydrates Firestore',
@@ -189,7 +265,10 @@ void main() {
       expect(s.sessionUid, 'cloud-uid');
       expect(s.d['name'], 'Cloud Ada');
       expect(s.d['steps'], 4200);
-      expect(s.sp.getString(emailStorageKey('ada@example.com')), isNotNull);
+      expect(
+        await s.readStoredAccount(emailStorageKey('ada@example.com')),
+        isNotNull,
+      );
     },
   );
 
@@ -208,12 +287,15 @@ void main() {
         AuthResult.wrongPassword,
       );
       expect(s.hasActiveSession, isFalse);
-      expect(s.sp.getString(emailStorageKey('ada@example.com')), isNull);
+      expect(
+        await s.readStoredAccount(emailStorageKey('ada@example.com')),
+        isNull,
+      );
     },
   );
 
-  Map<String, dynamic> accountJson(Store s, String key) =>
-      jsonDecode(s.sp.getString(key)!) as Map<String, dynamic>;
+  Future<Map<String, dynamic>> accountJson(Store s, String key) async =>
+      (await s.readStoredAccount(key))!;
 
   group('cloud payload sanitization', () {
     test('every credential and device-local field is stripped', () {
@@ -246,6 +328,29 @@ void main() {
       expect(jsonEncode(payload), isNot(contains('plain-old-password')));
       expect(jsonEncode(payload), isNot(contains('AAAA')));
     });
+
+    test(
+      'meal photos stay pending until represented by a Firestore image ID',
+      () {
+        final snapshot = Store().seed()
+          ..['meals'] = [
+            {
+              'n': 'Soup',
+              'localPhoto': base64Encode([1, 2, 3]),
+            },
+          ];
+        final pendingHash = localAccountSyncHash(snapshot);
+
+        expect(sanitizedAccountForCloud(snapshot)['meals'][0], {'n': 'Soup'});
+
+        (snapshot['meals'] as List)[0]['imageId'] = 'image-1';
+        expect(
+          localAccountSyncHash(snapshot),
+          canonicalAccountHash(sanitizedAccountForCloud(snapshot)),
+        );
+        expect(localAccountSyncHash(snapshot), isNot(pendingHash));
+      },
+    );
 
     test('temporary auth errors are only transport/outage codes', () {
       for (final code in [
@@ -388,6 +493,8 @@ void main() {
 
       final counted = Store().seed()..['steps'] = 5;
       expect(hasLocalFitnessData(counted), isTrue);
+      final distance = Store().seed()..['distanceMeters'] = 1200.0;
+      expect(hasLocalFitnessData(distance), isTrue);
       final workout = Store().seed()..['activeW'] = {'rid': 'r1'};
       expect(hasLocalFitnessData(workout), isTrue);
     });
@@ -416,10 +523,354 @@ void main() {
       final activeActivity = Store().seed()
         ..['activeActivity'] = {'type': 'run'};
       expect(hasLocalFitnessData(activeActivity), isTrue);
+
+      final profile = Store().seed()
+        ..['age'] = 35
+        ..['h'] = 172
+        ..['sex'] = 'female';
+      expect(hasLocalFitnessData(profile), isTrue);
+
+      final preferences = Store().seed()
+        ..['palette'] = 'graphite'
+        ..['dark'] = true
+        ..['lb'] = true
+        ..['wr'] = false;
+      expect(hasLocalFitnessData(preferences), isTrue);
+
+      final aiPlan = Store().seed()
+        ..['aiWeightPlan'] = {
+          'sig': 'plan-signature',
+          'facts': 'Saved coaching details',
+          'plan': {'summary': 'A saved plan'},
+        };
+      expect(hasLocalFitnessData(aiPlan), isTrue);
+    });
+
+    test('provider display name alone is not treated as a local edit', () {
+      final identity = Store().seed()
+        ..['user'] = 'runner@example.com'
+        ..['authProvider'] = 'google'
+        ..['name'] = 'Runner';
+
+      expect(
+        hasLocalFitnessData(identity, providerDisplayName: 'Runner'),
+        isFalse,
+      );
+      expect(
+        hasLocalFitnessData(identity, providerDisplayName: 'Different name'),
+        isTrue,
+      );
     });
   });
 
   group('sync cycles', () {
+    test(
+      'signed-in account stays in restoration state while cloud loads',
+      () async {
+        final fake = FakeCloudUserDoc();
+        fake.put(
+          'restoring',
+          cloudDataFor(
+            Store(),
+            uid: 'restoring',
+            email: 'restoring@example.com',
+            steps: 7654,
+          ),
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        final gate = Completer<void>();
+        fake.readGate = gate;
+        final s = await newGoogleStore(fake, 'restoring', attachCloud: true);
+
+        expect(s.isAccountRestoring, isTrue);
+        fake.readGate = null;
+        gate.complete();
+        expect(await s.syncNow(), isTrue);
+        expect(s.steps, 7654);
+        expect(s.isAccountRestoring, isFalse);
+      },
+    );
+
+    test('an edit made during the Firestore read is not overwritten', () async {
+      final fake = FakeCloudUserDoc();
+      final s = await newGoogleStore(fake, 'read-race');
+      s.cloudUserDoc = fake;
+      fake.put(
+        'read-race',
+        cloudDataFor(s, uid: 'read-race', email: 'read-race@example.com'),
+        DateTime.now().millisecondsSinceEpoch - 60000,
+      );
+      final gate = Completer<void>();
+      fake.readGate = gate;
+
+      final sync = s.syncNow();
+      await Future<void>.delayed(Duration.zero);
+      s.d['steps'] = 1234;
+      s.save();
+      fake.readGate = null;
+      gate.complete();
+
+      expect(
+        await sync,
+        isTrue,
+        reason:
+            '${s.syncError}; guarded=${fake.guardedWrites}; status=${s.syncStatusMessage}',
+      );
+      expect(s.steps, 1234);
+      expect(fake.data('read-race')!['steps'], 1234);
+    });
+
+    test(
+      'an edit during photo upload is retried from the latest snapshot',
+      () async {
+        final fake = FakeCloudUserDoc();
+        final s = await newGoogleStore(fake, 'upload-race');
+        s.cloudUserDoc = fake;
+        final uploader = FakeFoodImageUploader()
+          ..uploadGate = Completer<void>()
+          ..uploadStarted = Completer<void>();
+        s.foodImageUploader = uploader;
+        s.meals.add({
+          'n': 'Soup',
+          'localPhoto': base64Encode([4, 5, 6]),
+        });
+        s.save();
+
+        final sync = s.syncNow();
+        await uploader.uploadStarted!.future;
+        s.d['steps'] = 4321;
+        s.save();
+        uploader.uploadGate!.complete();
+
+        expect(await sync, isFalse);
+        expect(s.meals.single['imageId'], 'image-upload-race');
+        expect(await s.syncNow(), isTrue);
+        expect(fake.data('upload-race')!['steps'], 4321);
+        expect(
+          fake.data('upload-race')!['meals'].single['imageId'],
+          'image-upload-race',
+        );
+        expect(uploader.uploadedBytes, Uint8List.fromList([4, 5, 6]));
+      },
+    );
+
+    test(
+      'malformed Firestore content is backed up before local recovery',
+      () async {
+        final fake = FakeCloudUserDoc();
+        final s = await newGoogleStore(fake, 'malformed');
+        s.cloudUserDoc = fake;
+        s.d['steps'] = 987;
+        s.save();
+        fake.docs['malformed'] = {'data': 'invalid-content', 'updatedAt': 7};
+
+        expect(await s.syncNow(), isTrue);
+
+        final backup = jsonDecode(
+          s.sp.getString(s.cloudConflictBackupKey('malformed'))!,
+        ) as Map<String, dynamic>;
+        expect(backup['data'], 'invalid-content');
+        expect(fake.data('malformed')!['steps'], 987);
+      },
+    );
+
+    test('Firestore changes hydrate the active session in real time', () async {
+      final fake = FakeCloudUserDoc();
+      final s = await newGoogleStore(fake, 'live', attachCloud: true);
+      await s.syncNow();
+
+      final hydrated = Completer<void>();
+      s.addListener(() {
+        if (s.steps == 9000 && !hydrated.isCompleted) hydrated.complete();
+      });
+      fake.put(
+        'live',
+        cloudDataFor(s, uid: 'live', email: 'live@example.com', steps: 9000),
+        DateTime.now().millisecondsSinceEpoch + 60000,
+      );
+
+      await hydrated.future.timeout(const Duration(seconds: 2));
+      expect(s.steps, 9000);
+    });
+
+    test('local meal photos upload before Firestore sync', () async {
+      final fake = FakeCloudUserDoc();
+      final s = await newGoogleStore(fake, 'photos');
+      s.cloudUserDoc = fake;
+      await s.syncNow();
+      final uploader = FakeFoodImageUploader();
+      s.foodImageUploader = uploader;
+      final photo = base64Encode([4, 5, 6]);
+      s.meals.add({'n': 'Soup', 'k': 80, 'localPhoto': photo});
+      s.save();
+
+      expect(await s.syncNow(), isTrue);
+
+      final remoteMeal = (fake.data('photos')!['meals'] as List).single;
+      expect(remoteMeal['imageId'], 'image-photos');
+      expect(remoteMeal.containsKey('localPhoto'), isFalse);
+      expect(uploader.uploadedBytes, Uint8List.fromList([4, 5, 6]));
+      expect(s.meals.single['localPhoto'], photo);
+      expect(s.meals.single['imageId'], remoteMeal['imageId']);
+    });
+
+    test(
+      'profile photos upload to account-scoped Firestore image storage',
+      () async {
+        final fake = FakeCloudUserDoc();
+        final s = await newGoogleStore(fake, 'profile-photo');
+        s.cloudUserDoc = fake;
+        final uploader = FakeFoodImageUploader();
+        s.foodImageUploader = uploader;
+        final photo = base64Encode([7, 8, 9]);
+        s.d['profilePhoto'] = {'localPhoto': photo};
+        s.save();
+
+        expect(await s.syncNow(), isTrue);
+
+        final remotePhoto = fake.data('profile-photo')!['profilePhoto'] as Map;
+        expect(remotePhoto['imageId'], 'image-profile-photo');
+        expect(remotePhoto.containsKey('localPhoto'), isFalse);
+        expect(s.d['profilePhoto']['imageId'], 'image-profile-photo');
+        expect(s.d['profilePhoto']['localPhoto'], photo);
+        expect(uploader.uploadedBytes, Uint8List.fromList([7, 8, 9]));
+      },
+    );
+
+    test('sign-out flushes recent account changes to Firestore', () async {
+      final fake = FakeCloudUserDoc();
+      final s = await registerAndSignIn(fake);
+      expect(await s.syncNow(), isTrue);
+      s.d['steps'] = 1234;
+      s.save();
+
+      expect((await s.signOutAsync()).syncCompleted, isTrue);
+
+      expect(s.hasActiveSession, isFalse);
+      expect(fake.data('uid-linked')!['steps'], 1234);
+    });
+
+    test('sign-out does not wait on a stalled cloud read', () async {
+      final fake = FakeCloudUserDoc();
+      final s = await registerAndSignIn(fake);
+      fake.readGate = Completer<void>();
+
+      final stopwatch = Stopwatch()..start();
+      final result = await s.signOutAsync();
+      stopwatch.stop();
+      fake.readGate!.complete();
+
+      expect(result.syncCompleted, isFalse);
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 4)));
+      expect(s.hasActiveSession, isFalse);
+    });
+
+    test(
+      'logout and relogin preserve all Firestore data without duplicates',
+      () async {
+        final fake = FakeCloudUserDoc();
+        final s = await newStore(cloud: fake);
+        final remote = s.seed()
+          ..['user'] = 'runner@example.com'
+          ..['name'] = 'Runner'
+          ..['age'] = 34
+          ..['h'] = 176
+          ..['sex'] = 'female'
+          ..['activityLevel'] = 'moderate'
+          ..['palette'] = 'graphite'
+          ..['dark'] = true
+          ..['goal'] = {'w': 68.0, 'sw': 72.5, 'd': '2026-12-01', 'wk': 4}
+          ..['nutritionGoals'] = {
+            'calories': 1900,
+            'protein': 135,
+            'carbs': 180,
+            'fat': 60,
+          }
+          ..['activityGoals'] = {'waterMl': 2800, 'steps': 10000}
+          ..['routines'] = [
+            {'id': 'routine-1', 'name': 'Strength'},
+          ]
+          ..['sch'] = [
+            {'id': 'schedule-1', 'r': 'routine-1'},
+          ]
+          ..['water'] = [
+            {'d': today(), 'ml': 500},
+          ]
+          ..['steps'] = 4200
+          ..['distanceMeters'] = 3250.0
+          ..['act'] = [
+            {'id': 'activity-1', 'type': 'run'},
+          ]
+          ..['weights'] = [
+            [today(), 72.5],
+          ]
+          ..['meals'] = [
+            {'id': 'meal-1', 'n': 'Breakfast'},
+          ]
+          ..['hist'] = [
+            {'id': 'workout-1', 'n': 'Strength'},
+          ]
+          ..['log'] = [
+            {'d': daysAgo(1), 'steps': 3000},
+          ]
+          ..['activeW'] = {'rid': 'routine-1', 'startedAt': today()}
+          ..['activeActivity'] = {'type': 'run', 'startedAt': today()}
+          ..['aiWeightPlan'] = {
+            'sig': 'runner-plan',
+            'facts': 'Saved plan facts',
+            'plan': {'summary': 'Saved coaching plan'},
+          };
+        fake.put('runner-uid', remote, DateTime.now().millisecondsSinceEpoch);
+
+        s.activateGoogleAccount(
+          uid: 'runner-uid',
+          email: 'runner@example.com',
+          displayName: 'Runner',
+        );
+        expect(await s.syncNow(), isTrue);
+        expect(fake.guardedWrites, 0, reason: 'initial login should hydrate');
+        expect((await s.signOutAsync()).syncCompleted, isTrue);
+        expect(fake.guardedWrites, 0, reason: 'logout should not rewrite data');
+        expect(fake.data('runner-uid'), remote);
+
+        final restarted = await newStore(cloud: fake);
+        restarted.activateGoogleAccount(
+          uid: 'runner-uid',
+          email: 'runner@example.com',
+          displayName: 'Runner',
+        );
+        expect(await restarted.syncNow(), isTrue);
+
+        for (final key in [
+          'routines',
+          'sch',
+          'water',
+          'steps',
+          'distanceMeters',
+          'act',
+          'weights',
+          'meals',
+          'hist',
+          'log',
+          'age',
+          'h',
+          'sex',
+          'activityLevel',
+          'palette',
+          'dark',
+          'goal',
+          'nutritionGoals',
+          'activityGoals',
+          'activeW',
+          'activeActivity',
+          'aiWeightPlan',
+        ]) {
+          expect(restarted.d[key], remote[key], reason: key);
+          expect(fake.data('runner-uid')![key], remote[key], reason: key);
+        }
+      },
+    );
+
     test('first sync with no document uploads a sanitized payload', () async {
       final fake = FakeCloudUserDoc();
       final s = await registerAndSignIn(fake);
@@ -618,9 +1069,9 @@ void main() {
         expect(await s.syncNow(), isFalse);
 
         expect(s.syncFailed, isTrue);
-        expect(s.syncError, contains('Cloud backup failed'));
-        expect(s.syncStatusMessage, contains('Cloud backup failed'));
-        expect(accountJson(s, 'ft_account_u1')['steps'], 42);
+        expect(s.syncError, contains('Cloud sync failed'));
+        expect(s.syncStatusMessage, contains('Cloud sync failed'));
+        expect((await accountJson(s, 'ft_account_u1'))['steps'], 42);
         expect(fake.docs, isEmpty);
       },
     );
@@ -636,7 +1087,7 @@ void main() {
 
         expect(await s.syncNow(), isFalse);
         expect(s.syncFailed, isTrue);
-        expect(accountJson(s, 'ft_account_u1')['steps'], 42);
+        expect((await accountJson(s, 'ft_account_u1'))['steps'], 42);
         expect(fake.docs, isEmpty);
 
         fake.failWrite = false;
@@ -661,8 +1112,8 @@ void main() {
       expect(s.syncEnabled, isFalse);
       expect(await s.syncNow(), isFalse);
       expect(s.syncFailed, isFalse); // nothing was attempted
-      expect(s.syncStatusMessage, contains('Cloud backup unavailable'));
-      expect(accountJson(s, 'ft_account_u1')['steps'], 5);
+      expect(s.syncStatusMessage, contains('Cloud sync unavailable'));
+      expect((await accountJson(s, 'ft_account_u1'))['steps'], 5);
     });
   });
 
@@ -704,12 +1155,12 @@ void main() {
         // cloud data (4242) or their local data (100).
         expect(s.d['user'], isNull);
         expect(s.steps, 0);
-        expect(accountJson(s, 'ft')['steps'], 0);
-        expect(accountJson(s, 'ft')['user'], isNull);
+        expect((await accountJson(s, 'ft'))['steps'], 0);
+        expect((await accountJson(s, 'ft'))['user'], isNull);
 
         // Nothing was written under the old identity: its own snapshot, sync
         // state and backups are exactly as sign-out left them.
-        expect(accountJson(s, 'ft_account_u1')['steps'], 100);
+        expect((await accountJson(s, 'ft_account_u1'))['steps'], 100);
         expect(s.sp.getString('ft_sync_state_u1'), isNull);
         expect(s.sp.getString(s.prehydrateBackupKey('u1')), isNull);
         expect(s.sp.getString(s.cloudConflictBackupKey('u1')), isNull);
@@ -758,8 +1209,8 @@ void main() {
         expect(s.sessionUid, 'u2');
         expect(s.d['user'], 'u2@example.com');
         expect(s.steps, 7); // never u1's 4242 or its local 100
-        expect(accountJson(s, 'ft_account_u1')['steps'], 100); // untouched
-        expect(accountJson(s, 'ft_account_u2')['steps'], 7); // hydrated for u2
+        expect((await accountJson(s, 'ft_account_u1'))['steps'], 100);
+        expect((await accountJson(s, 'ft_account_u2'))['steps'], 7);
         expect(s.syncRunning, isFalse);
       },
     );
@@ -815,7 +1266,10 @@ void main() {
           s.sp.getString(s.migrationBackupKey(emailStorageKey('ada@b.com'))),
           isNull,
         );
-        expect(accountJson(s, emailStorageKey('ada@b.com'))['steps'], 42);
+        expect(
+          (await accountJson(s, emailStorageKey('ada@b.com')))['steps'],
+          42,
+        );
       },
     );
 
@@ -840,7 +1294,10 @@ void main() {
         s.sp.getString(s.migrationBackupKey(emailStorageKey('ada@b.com'))),
         isNull,
       );
-      expect(accountJson(s, emailStorageKey('ada@b.com'))['steps'], 42);
+      expect(
+        (await accountJson(s, emailStorageKey('ada@b.com')))['steps'],
+        42,
+      );
     });
 
     test(
@@ -898,7 +1355,10 @@ void main() {
         expect(backup['goal']['w'], 72.0);
 
         // The live account is untouched and still signs in with the same hash.
-        expect(accountJson(s, emailStorageKey('ada@b.com'))['steps'], 42);
+        expect(
+          (await accountJson(s, emailStorageKey('ada@b.com')))['steps'],
+          42,
+        );
         s.signOut();
         expect(
           await s.login(email: 'ada@b.com', password: 'password1'),

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -198,47 +197,120 @@ void main() {
     expect(store.hasActiveSession, isFalse);
   });
 
+  testWidgets('Local login does not ask to back up fitness data', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    pbkdf2IterationsOverride = 1000;
+    await store.init();
+    addTearDown(() => pbkdf2IterationsOverride = 0);
+
+    await tester.pumpWidget(const App());
+    await tester.pumpAndSettle();
+    await registerThroughForm(tester);
+
+    await tester.enterText(find.byType(TextField).at(1), 'password123');
+    await tester.tap(find.text('Log in'));
+    await settleHashing(tester);
+
+    expect(store.hasActiveSession, isTrue);
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Routines'), findsOneWidget);
+    expect(find.textContaining('backup'), findsNothing);
+    expect(find.textContaining('sync'), findsNothing);
+  });
+
+  testWidgets('Google login shows a centered logo until local loading ends', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await store.init(rollDay: false);
+
+    await tester.pumpWidget(const App());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fittract-login-loading')), findsNothing);
+
+    store.activateGoogleAccount(
+      uid: 'loading-user',
+      email: 'loading@example.com',
+      displayName: 'Loading User',
+    );
+    await tester.pump();
+
+    final logo = find.byKey(const ValueKey('fittract-loading-logo'));
+    expect(
+      find.byKey(const ValueKey('fittract-login-loading')),
+      findsOneWidget,
+    );
+    expect(logo, findsOneWidget);
+    final viewSize = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(
+      tester.getCenter(logo),
+      Offset(viewSize.width / 2, viewSize.height / 2),
+    );
+
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('fittract-login-loading')), findsNothing);
+    expect(find.text('Today'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'A cloud sign-in that never answers clears the busy state and reports it',
+    'successful Google login shows loading then opens the dashboard',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({});
-      pbkdf2IterationsOverride = 1000;
-      await store.init();
-      addTearDown(() {
-        pbkdf2IterationsOverride = 0;
-        store.cloudLinkOverride = null;
-        store.cloudLinkTimeout = const Duration(seconds: 15);
-      });
+      await store.init(rollDay: false);
+
+      final pendingSignIn = Completer<GoogleAuthAccount>();
+      GoogleAuthService.debugSignInOverride = () => pendingSignIn.future;
+      addTearDown(GoogleAuthService.resetGoogleSignInInitializationForTesting);
 
       await tester.pumpWidget(const App());
       await tester.pumpAndSettle();
-      // Create the account first, so the login below reaches the cloud step
-      // with a correct local password.
-      await registerThroughForm(tester);
-
-      store.cloudLinkTimeout = const Duration(milliseconds: 500);
-      store.cloudLinkOverride = ({
-        required String email,
-        required String password,
-      }) => Completer<String?>().future;
-
-      await tester.enterText(find.byType(TextField).at(1), 'password123');
-      await tester.tap(find.text('Log in'));
-      await settleHashing(tester);
-
-      // The bounded wait ends: no spinner left behind, the button is usable
-      // again, and the reason is on screen in the store's own words.
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.text('Log in'), findsOneWidget);
+      await tester.tap(find.text('Continue with Google'));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
       expect(
-        find.text(
-          'Could not reach the account service. Check your connection and try again.',
+        find.byKey(const ValueKey('fittract-login-loading')),
+        findsNothing,
+      );
+
+      pendingSignIn.complete(
+        const GoogleAuthAccount(
+          uid: 'google-user',
+          email: 'google@example.com',
+          displayName: 'Google User',
         ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(store.hasActiveSession, isTrue);
+      expect(store.isGoogleAccount, isTrue);
+      expect(store.sessionUid, 'google-user');
+      expect(
+        find.byKey(const ValueKey('fittract-login-loading')),
         findsOneWidget,
       );
-      expect(store.hasActiveSession, isFalse);
-      expect(store.sessionUid, isNull);
-      expect(find.byType(NavigationBar), findsNothing);
+      final logo = find.byKey(const ValueKey('fittract-loading-logo'));
+      expect(logo, findsOneWidget);
+      final viewSize = tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(
+        tester.getCenter(logo),
+        Offset(viewSize.width / 2, viewSize.height / 2),
+      );
+
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('fittract-login-loading')),
+        findsNothing,
+      );
+      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Routines'), findsOneWidget);
+      expect(find.text('Continue with Google'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -344,7 +416,7 @@ void main() {
     expect(forgot.style!.textStyle!.resolve({})!.fontSize, 15);
     expect(
       forgot.style!.textStyle!.resolve({})!.decoration,
-      TextDecoration.underline,
+      TextDecoration.none,
     );
 
     await tester.ensureVisible(find.text('New here? Create an account'));
@@ -461,9 +533,9 @@ void main() {
 
       // ...while the account itself and everything registration initialized
       // are kept in its own bucket.
-      final raw = store.sp.getString(emailStorageKey('reg@example.com'));
-      expect(raw, isNotNull);
-      final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+      final decoded = (await store.readStoredAccount(
+        emailStorageKey('reg@example.com'),
+      ))!;
       expect(decoded['user'], 'reg@example.com');
       expect(decoded['name'], 'Test User');
       expect(decoded['cred'], isA<Map>());
@@ -471,7 +543,10 @@ void main() {
       // A restart stays signed out and the account is still there.
       await store.init();
       expect(store.hasActiveSession, isFalse);
-      expect(store.sp.getString(emailStorageKey('reg@example.com')), raw);
+      expect(
+        await store.readStoredAccount(emailStorageKey('reg@example.com')),
+        decoded,
+      );
 
       // Signing in manually restores that same profile.
       await tester.enterText(find.byType(TextField).at(1), 'password123');
@@ -490,9 +565,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await store.init();
 
-    final pendingSignIns = <Completer<UserCredential>>[];
+    final pendingSignIns = <Completer<GoogleAuthAccount>>[];
     GoogleAuthService.debugSignInOverride = () {
-      final pending = Completer<UserCredential>();
+      final pending = Completer<GoogleAuthAccount>();
       pendingSignIns.add(pending);
       return pending.future;
     };
@@ -516,13 +591,18 @@ void main() {
     await tester.pump();
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     await cancelExternalAuth();
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('Continue with Google'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Continue with Google'), findsNothing);
+    await tester.tap(find.byType(OutlinedButton).first);
+    await tester.pump();
+    expect(pendingSignIns, hasLength(1));
     pendingSignIns.last.completeError(
       const GoogleSignInException(code: GoogleSignInExceptionCode.canceled),
     );
     await tester.pumpAndSettle();
 
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Continue with Google'), findsOneWidget);
     await tester.ensureVisible(find.text('New here? Create an account'));
     await tester.tap(find.text('New here? Create an account'));
     await tester.pumpAndSettle();

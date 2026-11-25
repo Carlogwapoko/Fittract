@@ -50,6 +50,36 @@ class _ProgressState extends State<ProgressTab> {
     );
   }
 
+  Widget _energyMetric(
+    IconData icon,
+    String label,
+    int calories,
+    Color color,
+  ) => Row(
+    children: [
+      Icon(icon, size: 16, color: color),
+      const SizedBox(width: kGapXs),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: muted.copyWith(fontSize: 11)),
+            Text(
+              '${store.withThousands(calories)} kcal',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
   List<Widget> overview(BuildContext c) {
     // Dates are stringified rather than cast: retention keeps entries whose
     // date is missing, and they must not crash this screen.
@@ -65,20 +95,23 @@ class _ProgressState extends State<ProgressTab> {
     final hist = store.hist.toList()
       ..sort((a, b) => '${b['d']}'.compareTo('${a['d']}'));
     return [
-      Row(
-        children: [
-          stat(
-            Icons.fitness_center,
-            '${recent.length}',
-            'Workouts · last 4 weeks',
-          ),
-          const SizedBox(width: kGapMd),
-          stat(
-            Icons.timer_outlined,
-            '${mins ~/ 60}h ${mins % 60}m',
-            'Time moving',
-          ),
-        ],
+      IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            stat(
+              Icons.fitness_center,
+              '${recent.length}',
+              'Workouts · last 4 weeks',
+            ),
+            const SizedBox(width: kGapMd),
+            stat(
+              Icons.timer_outlined,
+              '${mins ~/ 60}h ${mins % 60}m',
+              'Time moving',
+            ),
+          ],
+        ),
       ),
       card(
         child: Column(
@@ -305,28 +338,75 @@ class _ProgressState extends State<ProgressTab> {
     final sw = store.goalField('sw'), gw = store.goalField('w');
     final weightEstimate = WeightEstimator.calculate(store.d);
     final hasWeight = weightEstimate.hasAnchor;
+    WeightEstimateDay? todayEstimate;
+    for (final day in weightEstimate.days) {
+      if (day.dateKey == today()) {
+        todayEstimate = day;
+        break;
+      }
+    }
+    final caloriesConsumed = todayEstimate?.caloriesConsumed ?? store.kcal();
+    final caloriesBurned =
+        todayEstimate?.activeCaloriesBurned ??
+        WeightEstimator.loggedExerciseCaloriesForDate(store.d, DateTime.now());
     final body = tab == 0
         ? overview(c)
         : tab == 1
         ? [
             card(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Text(
-                    hasWeight
-                        ? store.wt(weightEstimate.currentWeightKg)
-                        : 'Not logged yet',
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
+                  Expanded(
+                    flex: 5,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Current weight',
+                          style: muted.copyWith(fontSize: 11),
+                        ),
+                        Text(
+                          hasWeight
+                              ? store.wt(weightEstimate.currentWeightKg)
+                              : 'Not logged yet',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: hasWeight ? 28 : 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          hasWeight
+                              ? 'Started at ${store.wt(sw)}'
+                              : 'Log your first weight to start tracking.',
+                          style: muted,
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    hasWeight
-                        ? 'Started at ${store.wt(sw)}'
-                        : 'Log your first weight to start tracking.',
-                    style: muted,
+                  const SizedBox(width: kGapMd),
+                  Expanded(
+                    flex: 4,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _energyMetric(
+                          Icons.restaurant_outlined,
+                          'Consumed',
+                          caloriesConsumed,
+                          primaryOf(c),
+                        ),
+                        const SizedBox(height: kGapSm),
+                        _energyMetric(
+                          Icons.local_fire_department_outlined,
+                          'Burned',
+                          caloriesBurned,
+                          appTokensOf(c).activity,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -370,11 +450,29 @@ class _ProgressState extends State<ProgressTab> {
         width: double.infinity,
         child: SegmentedButton<int>(
           showSelectedIcon: false,
+          style: const ButtonStyle(
+            padding: WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            ),
+            textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+          ),
           segments: const [
-            ButtonSegment(value: 0, label: Text('Overview')),
-            ButtonSegment(value: 1, label: Text('Weight')),
-            ButtonSegment(value: 2, label: Text('Goals')),
-            ButtonSegment(value: 3, label: Text('Daily')),
+            ButtonSegment(
+              value: 0,
+              label: Text('Overview', maxLines: 1, softWrap: false),
+            ),
+            ButtonSegment(
+              value: 1,
+              label: Text('Weight', maxLines: 1, softWrap: false),
+            ),
+            ButtonSegment(
+              value: 2,
+              label: Text('Goals', maxLines: 1, softWrap: false),
+            ),
+            ButtonSegment(
+              value: 3,
+              label: Text('Daily', maxLines: 1, softWrap: false),
+            ),
           ],
           selected: {tab},
           onSelectionChanged: (s) => setState(() => tab = s.first),

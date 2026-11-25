@@ -606,32 +606,36 @@ void main() {
       },
     );
 
-    testWidgets('a successful remote sign-out still ends the local session', (
-      tester,
-    ) async {
-      largeViewport(tester);
-      await freshStore();
-      store.activateGoogleAccount(
-        uid: 'uid-2',
-        email: 'user2@example.com',
-        displayName: 'User Two',
-      );
-      GoogleAuthService.debugSignOutOverride = () async {};
-      addTearDown(() => GoogleAuthService.debugSignOutOverride = null);
+    testWidgets(
+      'remote sign-out succeeds and warns when cloud sync is unavailable',
+      (tester) async {
+        largeViewport(tester);
+        await freshStore();
+        store.activateGoogleAccount(
+          uid: 'uid-2',
+          email: 'user2@example.com',
+          displayName: 'User Two',
+        );
+        GoogleAuthService.debugSignOutOverride = () async {};
+        addTearDown(() => GoogleAuthService.debugSignOutOverride = null);
 
-      await tester.pumpWidget(
-        const MaterialApp(home: Scaffold(body: ProfileTab())),
-      );
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          const MaterialApp(home: Scaffold(body: ProfileTab())),
+        );
+        await tester.pumpAndSettle();
 
-      await tapBtn(tester, 'Log out');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Log Out'));
-      await tester.pumpAndSettle();
+        await tapBtn(tester, 'Log out');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Log Out'));
+        await tester.pumpAndSettle();
 
-      expect(store.hasActiveSession, isFalse);
-      expect(find.textContaining('signed out on this device'), findsNothing);
-    });
+        expect(store.hasActiveSession, isFalse);
+        expect(
+          find.textContaining('signed out on this device'),
+          findsOneWidget,
+        );
+      },
+    );
 
     testWidgets('confirmed logout returns the app to Sign In', (tester) async {
       largeViewport(tester);

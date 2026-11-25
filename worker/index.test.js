@@ -164,6 +164,63 @@ test('scan endpoint sends a valid photo to Gemini and returns detected ingredien
   const result = await response.json();
   assert.equal(result.is_food, true);
   assert.equal(result.ingredients[0].name, 'cooked rice');
+  assert.deepEqual(result.nutrition, {
+    calories: 130,
+    protein: 2.7,
+    carbs: 28,
+    fat: 0.3,
+    has_ai_fallback: false,
+  });
+  assert.equal(result.ingredients[0].source, 'USDA FoodData Central');
+});
+
+test('scan keeps recognized food when nutrition enrichment is unavailable', async () => {
+  const failingNutritionFetch = (url, init) => {
+    const target = String(url);
+    if (target.includes('/foods/search')) {
+      return Promise.resolve(Response.json({foods: []}));
+    }
+    if (target.includes('generateContent')) {
+      const request = JSON.parse(init.body);
+      const prompt = request.contents[0].parts.map((part) => part.text ?? '').join('\n');
+      if (prompt.includes('Identify visible ingredients')) {
+        return Promise.resolve(Response.json({
+          candidates: [{
+            content: {
+              parts: [{
+                text: '{"is_food":true,"meal_name":"Mango","meal_type":"Snack","ingredients":[{"name":"mango","amount":100,"unit":"g"}]}',
+              }],
+            },
+          }],
+        }));
+      }
+      if (prompt.includes('Estimate nutrition per 100 grams')) {
+        return Promise.reject(new Error('Simulated Gemini outage.'));
+      }
+    }
+    return fakeFetch(url, init);
+  };
+  const response = await handleRequest(
+    new Request('https://food.example.workers.dev/api/food', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${makeToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'scan',
+        imageBase64: '/9j/2Q==',
+        mimeType: 'image/jpeg',
+      }),
+    }),
+    env,
+    failingNutritionFetch,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.is_food, true);
+  assert.equal(result.ingredients[0].name, 'mango');
+  assert.equal(result.nutrition_unavailable, true);
 });
 
 test('nutrition uses a generic USDA detail record and scales values by grams', async () => {
